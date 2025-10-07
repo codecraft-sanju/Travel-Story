@@ -1,0 +1,13 @@
+@import "tailwindcss";
+.shadow-glow {
+  box-shadow: 0 8px 20px rgba(0,0,0,0.25), 0 0 18px rgba(0, 150, 255, 0.15);
+  border-radius: 6px;
+}
+
+.trail-line {
+  stroke: #00b4d8;
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
+}
