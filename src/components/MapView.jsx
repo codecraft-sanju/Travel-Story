@@ -12,34 +12,30 @@ const MapView = ({
   tailCoords,
   vehiclePos,
   vehicleRotation,
-  vehicle, // Added vehicle prop
+  vehicle,
 }) => {
   useEffect(() => {
     const map = mapRef.current?.getMap();
     if (!map) return;
 
-    // Dynamically load vehicle icon if not exists
-    const vehicleIcon = { plane: "/plane.png", bike: "/bike.png", car: "/car.png" }[vehicle];
-    if (!map.hasImage("vehicle-icon")) {
-      map.loadImage(vehicleIcon, (err, img) => {
-        if (!err && !map.hasImage("vehicle-icon")) map.addImage("vehicle-icon", img);
-      });
-    }
+    const iconKey = `${vehicle}-icon`;
 
-    // Update vehicle position
-    if (vehiclePos) {
+    if (map.hasImage(iconKey)) {
       const vehicleSource = map.getSource("vehicle-point");
-      if (vehicleSource) {
+      if (vehicleSource && vehiclePos) {
         vehicleSource.setData({
           type: "FeatureCollection",
           features: [
-            { type: "Feature", geometry: { type: "Point", coordinates: vehiclePos }, properties: { rotation: vehicleRotation } },
+            {
+              type: "Feature",
+              geometry: { type: "Point", coordinates: vehiclePos },
+              properties: { rotation: vehicleRotation },
+            },
           ],
         });
       }
     }
 
-    // Update tail
     if (tailCoords.length > 0) {
       const tailSource = map.getSource("tail");
       if (tailSource) {
@@ -51,13 +47,26 @@ const MapView = ({
     }
   }, [vehicle, vehiclePos, vehicleRotation, tailCoords]);
 
+  const getIconSize = () => {
+    switch (vehicle) {
+      case "bike": return 0.22;
+      case "car": return 0.18;
+      default: return 0.12; // plane
+    }
+  };
+
   return (
     <div className="w-full h-screen" ref={recordRef}>
       <Map
         ref={mapRef}
-        initialViewState={{ longitude: 77.1025, latitude: 28.7041, zoom: 4 }}
+        initialViewState={{
+          longitude: 77.1025,
+          latitude: 28.7041,
+          zoom: 4,
+          pitch: 45,
+        }}
         mapboxAccessToken={MAPBOX_TOKEN}
-        mapStyle="mapbox://styles/mapbox/streets-v11"
+        mapStyle="mapbox://styles/mapbox/streets-v12"
         style={{ width: "100%", height: "100%" }}
         onLoad={(e) => handleMapLoad(e.target)}
       >
@@ -65,39 +74,48 @@ const MapView = ({
           <Source
             id="from-point"
             type="geojson"
-            data={{ type: "FeatureCollection", features: [{ type: "Feature", geometry: { type: "Point", coordinates: fromCoord } }] }}
+            data={{
+              type: "FeatureCollection",
+              features: [{ type: "Feature", geometry: { type: "Point", coordinates: fromCoord } }],
+            }}
           >
-            <Layer id="from-layer" type="circle" paint={{ "circle-radius": 6, "circle-color": "#22c55e" }} />
+            <Layer id="from-layer" type="circle" paint={{ "circle-radius": 8, "circle-color": "#22c55e" }} />
           </Source>
         )}
         {toCoord && (
           <Source
             id="to-point"
             type="geojson"
-            data={{ type: "FeatureCollection", features: [{ type: "Feature", geometry: { type: "Point", coordinates: toCoord } }] }}
+            data={{
+              type: "FeatureCollection",
+              features: [{ type: "Feature", geometry: { type: "Point", coordinates: toCoord } }],
+            }}
           >
-            <Layer id="to-layer" type="circle" paint={{ "circle-radius": 6, "circle-color": "#3b82f6" }} />
+            <Layer id="to-layer" type="circle" paint={{ "circle-radius": 8, "circle-color": "#3b82f6" }} />
           </Source>
         )}
         {routeCoords && (
           <Source id="route" type="geojson" data={{ type: "Feature", geometry: { type: "LineString", coordinates: routeCoords } }}>
-            <Layer id="route-layer" type="line" paint={{ "line-color": "#ff5733", "line-width": 4, "line-dasharray": [2, 4] }} />
+            <Layer id="route-layer" type="line" paint={{ "line-color": "#ff5733", "line-width": 5, "line-dasharray": [2, 4] }} />
           </Source>
         )}
         <Source id="tail" type="geojson" data={{ type: "Feature", geometry: { type: "LineString", coordinates: tailCoords } }}>
-          <Layer id="tail-layer" type="line" paint={{ "line-color": "#ffbd69", "line-width": 6, "line-opacity": 0.6, "line-blur": 2 }} />
+          <Layer id="tail-layer" type="line" paint={{ "line-color": "#ffd369", "line-width": 6, "line-opacity": 0.7, "line-blur": 2 }} />
         </Source>
         <Source
           id="vehicle-point"
           type="geojson"
-          data={{ type: "FeatureCollection", features: [{ type: "Feature", geometry: { type: "Point", coordinates: vehiclePos || [0, 0] }, properties: { rotation: vehicleRotation } }] }}
+          data={{
+            type: "FeatureCollection",
+            features: [{ type: "Feature", geometry: { type: "Point", coordinates: vehiclePos || [0, 0] }, properties: { rotation: vehicleRotation } }],
+          }}
         >
           <Layer
             id="vehicle-layer"
             type="symbol"
             layout={{
-              "icon-image": "vehicle-icon",
-              "icon-size": 0.11,
+              "icon-image": `${vehicle}-icon`,
+              "icon-size": getIconSize(),
               "icon-rotate": ["get", "rotation"],
               "icon-rotation-alignment": "map",
               "icon-allow-overlap": true,

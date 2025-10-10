@@ -1,4 +1,3 @@
-// src/components/VideoModal.jsx
 import React from "react";
 import { FaSave, FaShareAlt } from "react-icons/fa";
 
@@ -22,10 +21,8 @@ const VideoModal = ({ recordedVideo }) => {
           >
             <FaSave /> Save Video
           </button>
-          <button
-            onClick={() => alert("Sharing not supported on this device.")}
-            className="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 flex items-center gap-1"
-          >
+          <button onClick={() => alert("Sharing not supported on this device.")}
+            className="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 flex items-center gap-1">
             <FaShareAlt /> Share
           </button>
         </div>

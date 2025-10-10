@@ -1,8 +1,8 @@
+// src/App.jsx
 import React, { useState, useRef } from "react";
 import axios from "axios";
 import { gsap } from "gsap";
 import * as turf from "@turf/turf";
-
 import ControlPanel from "./components/ControlPanel";
 import MapView from "./components/MapView";
 import VideoModal from "./components/VideoModal";
@@ -28,25 +28,23 @@ const App = () => {
   const recordedChunks = useRef([]);
   const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN;
 
-  // --- Recording ---
+  // --- Video Recording ---
   const startRecording = () => {
     const canvas = recordRef.current?.querySelector("canvas");
     if (!canvas) return;
-    const stream = canvas.captureStream(60);
-    mediaRecorderRef.current = new MediaRecorder(stream, {
-      mimeType: "video/webm;codecs=vp9",
-      videoBitsPerSecond: 6000000,
-    });
+
+    const stream = canvas.captureStream(30);
+    const options = { mimeType: "video/webm;codecs=vp9", videoBitsPerSecond: 4000000 };
+    mediaRecorderRef.current = new MediaRecorder(stream, options);
     recordedChunks.current = [];
-    mediaRecorderRef.current.ondataavailable = (e) => {
-      if (e.data.size > 0) recordedChunks.current.push(e.data);
-    };
+    mediaRecorderRef.current.ondataavailable = (e) => e.data.size && recordedChunks.current.push(e.data);
     mediaRecorderRef.current.onstop = () => {
       const blob = new Blob(recordedChunks.current, { type: "video/webm" });
       setRecordedVideo(URL.createObjectURL(blob));
     };
     mediaRecorderRef.current.start();
   };
+
   const stopRecording = () => mediaRecorderRef.current?.stop();
 
   // --- Autocomplete ---
@@ -58,133 +56,128 @@ const App = () => {
         { params: { access_token: MAPBOX_TOKEN, autocomplete: true, limit: 6 } }
       );
       setSuggestions(res.data.features || []);
-    } catch (err) {
-      console.error(err);
+    } catch {
       setSuggestions([]);
     }
   };
 
   const handleSelectCity = (place, type) => {
     if (!place?.center) return;
-    if (type === "from") {
-      setFromCity(place.place_name);
-      setFromCoord(place.center);
-      setFromSuggestions([]);
-    } else {
-      setToCity(place.place_name);
-      setToCoord(place.center);
-      setToSuggestions([]);
-    }
-    setVehiclePos(null);
-    setVehicleRotation(0);
-    setRouteCoords(null);
-    setTailCoords([]);
-    setRecordedVideo(null);
+    type === "from" ? (setFromCity(place.place_name), setFromCoord(place.center), setFromSuggestions([]))
+                    : (setToCity(place.place_name), setToCoord(place.center), setToSuggestions([]));
+    setVehiclePos(null); setVehicleRotation(0); setRouteCoords(null); setTailCoords([]); setRecordedVideo(null);
   };
 
-  // --- Generate Route ---
+  // --- Generate Route with Smooth Bezier Interpolation ---
   const generateRoute = () => {
     if (!fromCoord || !toCoord) return;
-    const line = turf.greatCircle(fromCoord, toCoord, { npoints: 120 });
-    setRouteCoords(line.geometry.coordinates);
-
+    const line = turf.greatCircle(fromCoord, toCoord, { npoints: 300 }); // more points for smoothness
+    const bezier = turf.bezierSpline(line, { resolution: 10000, sharpness: 0.85 });
+    setRouteCoords(bezier.geometry.coordinates);
     if (mapRef.current) {
       const bounds = [
         [Math.min(fromCoord[0], toCoord[0]), Math.min(fromCoord[1], toCoord[1])],
-        [Math.max(fromCoord[0], toCoord[0]), Math.max(fromCoord[1], toCoord[1])],
+        [Math.max(fromCoord[0], toCoord[0]), Math.max(fromCoord[1], toCoord[1])]
       ];
-      mapRef.current.fitBounds(bounds, { padding: 80, duration: 1000 });
+      mapRef.current.fitBounds(bounds, { padding: 100, duration: 1500 });
     }
   };
 
-  // --- Start Journey (Mobile Optimized) ---
-  const startJourney = () => {
+  // --- Start Journey: Smooth Cinematic Motion ---
+  const startJourney = async () => {
     if (!routeCoords?.length) return;
-
     setJourneyStarted(true);
+    const map = mapRef.current?.getMap();
+
+    // preload all vehicle icons
+    const vehicles = ["plane", "bike", "car"];
+    for (const v of vehicles) {
+      const img = `${import.meta.env.BASE_URL}${v}.png`;
+      if (!map.hasImage(`${v}-icon`)) await new Promise(resolve => map.loadImage(img, (err, image) => (!err && !map.hasImage(`${v}-icon`)) && map.addImage(`${v}-icon`, image), resolve()));
+    }
+
     startRecording();
 
     const index = { i: 0 };
     const total = routeCoords.length;
-    const duration = 6;
+    const tailRatio = window.innerWidth < 768 ? 0.05 : 0.07;
+    const cameraDuration = window.innerWidth < 768 ? 400 : 250;
 
-    const tailRatio = window.innerWidth < 768 ? 0.04 : 0.06; // shorter tail on mobile
-    const cameraDuration = window.innerWidth < 768 ? 300 : 100; // slower camera on mobile
-
+    gsap.ticker.fps(60); // higher FPS for ultra-smooth
     gsap.killTweensOf(index);
-    gsap.to(index, {
-      i: total - 1,
-      duration,
-      ease: "power1.inOut",
-      onUpdate: () => {
-        const posIndex = Math.floor(index.i);
-        const pos = routeCoords[posIndex];
 
-        setVehiclePos(pos);
-        const tailLength = Math.max(6, Math.floor(total * tailRatio));
-        const start = Math.max(0, posIndex - tailLength);
-        setTailCoords(routeCoords.slice(start, posIndex + 1));
+    setTimeout(() => {
+      gsap.to(index, {
+        i: total - 1,
+        duration: Math.min(15, Math.max(5, turf.distance(turf.point(fromCoord), turf.point(toCoord)) / 150)),
+        ease: "power2.inOut",
+        onUpdate: () => {
+          const posIndex = Math.floor(index.i);
+          const pos = routeCoords[posIndex];
+          if (!pos) return;
 
-        if (posIndex < routeCoords.length - 1) {
-          const angle = turf.bearing(turf.point(pos), turf.point(routeCoords[posIndex + 1]));
-          setVehicleRotation(angle);
+          setVehiclePos(pos);
+
+          // tail effect with fading
+          const tailLength = Math.max(8, Math.floor(total * tailRatio));
+          const start = Math.max(0, posIndex - tailLength);
+          const tailSlice = routeCoords.slice(start, posIndex + 1);
+          setTailCoords(tailSlice.map((c, i) => ({
+            coord: c,
+            opacity: (i + 1) / tailSlice.length
+          })));
+
+          // rotation for banking
+          if (posIndex < routeCoords.length - 1) {
+            const angle = turf.bearing(turf.point(pos), turf.point(routeCoords[posIndex + 1]));
+            setVehicleRotation(angle);
+          }
+
+          // camera movement
+          if (mapRef.current) {
+            const nextIndex = Math.min(routeCoords.length - 1, posIndex + 3);
+            const nextPos = routeCoords[nextIndex];
+            const bearing = turf.bearing(turf.point(pos), turf.point(nextPos));
+            mapRef.current.easeTo({ center: pos, bearing, pitch: 60, duration: cameraDuration, easing: t => t });
+          }
+        },
+        onComplete: () => {
+          stopRecording();
+          setTimeout(() => setJourneyStarted(false), 1000);
         }
+      });
+    }, 700);
+  };
 
-        if (mapRef.current) {
-          const nextIndex = Math.min(routeCoords.length - 1, posIndex + 3);
-          const nextPos = routeCoords[nextIndex];
-          const bearing = turf.bearing(turf.point(pos), turf.point(nextPos));
-          mapRef.current.easeTo({ center: pos, bearing, pitch: 45, duration: cameraDuration, easing: (t) => t });
-        }
-      },
-      onComplete: () => stopRecording(),
+  const handleMapLoad = map => {
+    const vehicles = ["plane", "bike", "car"];
+    vehicles.forEach(v => {
+      const img = `${import.meta.env.BASE_URL}${v}.png`;
+      if (!map.hasImage(`${v}-icon`)) map.loadImage(img, (err, image) => (!err && !map.hasImage(`${v}-icon`)) && map.addImage(`${v}-icon`, image));
     });
   };
 
-  const handleMapLoad = (map) => {
-    const vehicleIcon = { plane: "/plane.png", bike: "/bike.png", car: "/car.png" }[vehicle];
-    if (!map.hasImage("vehicle-icon")) {
-      map.loadImage(vehicleIcon, (error, image) => {
-        if (!error && !map.hasImage("vehicle-icon")) map.addImage("vehicle-icon", image);
-      });
-    }
-  };
-
   return (
-    <div className="relative w-full h-screen bg-gray-100">
-      {!journeyStarted && (
-        <ControlPanel
-          fromCity={fromCity}
-          setFromCity={setFromCity}
-          toCity={toCity}
-          setToCity={setToCity}
-          vehicle={vehicle}
-          setVehicle={setVehicle}
-          fromSuggestions={fromSuggestions}
-          toSuggestions={toSuggestions}
-          fetchSuggestions={fetchSuggestions}
-          setFromSuggestions={setFromSuggestions}
-          setToSuggestions={setToSuggestions}
-          handleSelectCity={handleSelectCity}
-          generateRoute={generateRoute}
-          startJourney={startJourney}
-        />
-      )}
-
+    <div className="relative w-full h-screen bg-gray-100 overflow-hidden">
+      {!journeyStarted && <ControlPanel
+        fromCity={fromCity} setFromCity={setFromCity}
+        toCity={toCity} setToCity={setToCity}
+        vehicle={vehicle} setVehicle={setVehicle}
+        fromSuggestions={fromSuggestions} toSuggestions={toSuggestions}
+        fetchSuggestions={fetchSuggestions}
+        setFromSuggestions={setFromSuggestions} setToSuggestions={setToSuggestions}
+        handleSelectCity={handleSelectCity}
+        generateRoute={generateRoute}
+        startJourney={startJourney}
+      />}
       <MapView
-        mapRef={mapRef}
-        recordRef={recordRef}
-        MAPBOX_TOKEN={MAPBOX_TOKEN}
+        mapRef={mapRef} recordRef={recordRef} MAPBOX_TOKEN={MAPBOX_TOKEN}
         handleMapLoad={handleMapLoad}
-        fromCoord={fromCoord}
-        toCoord={toCoord}
-        routeCoords={routeCoords}
-        tailCoords={tailCoords}
-        vehiclePos={vehiclePos}
-        vehicleRotation={vehicleRotation}
-        vehicle={vehicle} // Pass vehicle for dynamic icon
+        fromCoord={fromCoord} toCoord={toCoord}
+        routeCoords={routeCoords} tailCoords={tailCoords}
+        vehiclePos={vehiclePos} vehicleRotation={vehicleRotation}
+        vehicle={vehicle}
       />
-
       <VideoModal recordedVideo={recordedVideo} />
     </div>
   );
