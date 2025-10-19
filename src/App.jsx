@@ -8,7 +8,7 @@ import Map from "react-map-gl";
 // ✈️ CONFIG
 // ==========================
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN;
-const PLANE_ICON = "plane-icon";
+const PLANE_ICON = "plane-icon";//d
 const PLANE_ICON_SIZE = 0.16;
 
 // glass button reusable
