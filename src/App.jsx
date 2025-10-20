@@ -4,18 +4,12 @@ import { gsap } from "gsap";
 import * as turf from "@turf/turf";
 import Map from "react-map-gl";
 
-// ==========================
-// ✈️ CONFIG
-// ==========================
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN;
-const PLANE_ICON = "plane-icon"; // keep stable across style reloads
+const PLANE_ICON = "plane-icon";
 const PLANE_ICON_SIZE = 0.16;
-
-// ✅ Put `plane.png` in your project's public/ folder → /public/plane.png
-//    or change the path below accordingly
 const PLANE_ICON_URL = "/plane.png";
 
-// glassy button
+// 🔘 Reusable Button Component
 const Btn = ({ children, onClick, variant = "primary", disabled }) => {
   const base =
     "px-4 py-2 rounded-xl backdrop-blur border transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed";
@@ -27,13 +21,17 @@ const Btn = ({ children, onClick, variant = "primary", disabled }) => {
     ghost: "bg-white/10 text-white border-white/20 hover:bg-white/20",
   };
   return (
-    <button className={`${base} ${variants[variant]}`} onClick={onClick} disabled={disabled}>
+    <button
+      className={`${base} ${variants[variant]}`}
+      onClick={onClick}
+      disabled={disabled}
+    >
       {children}
     </button>
   );
 };
 
-export default function PlaneJourney() {
+export default function App() {
   const [fromCity, setFromCity] = useState("");
   const [toCity, setToCity] = useState("");
   const [fromSug, setFromSug] = useState([]);
@@ -51,34 +49,33 @@ export default function PlaneJourney() {
   const debounceRef = useRef({ from: null, to: null });
   const tlRef = useRef(null);
 
-  // ==========================
+  const fromRef = useRef(null);
+  const toRef = useRef(null);
+
   // 🌍 FETCH CITY SUGGESTIONS
-  // ==========================
   const fetchSuggestions = async (query, setList) => {
     if (!query?.trim()) return setList([]);
     try {
       const res = await axios.get(
-        `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json`,
-        { params: { access_token: MAPBOX_TOKEN, autocomplete: true, limit: 6 } }
+        `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(
+          query
+        )}.json`,
+        {
+          params: { access_token: MAPBOX_TOKEN, autocomplete: true, limit: 6 },
+        }
       );
       setList(res.data.features || []);
-    } catch (e) {
-      console.warn("geocode fail", e);
+    } catch {
       setList([]);
     }
   };
 
-  // ==========================
-  // 📍 CITY SELECT
-  // ==========================
-  const fromRef = useRef(null);
-  const toRef = useRef(null);
-
+  // 📍 SELECT CITY
   const selectPlace = (p, type) => {
     const map = mapRef.current?.getMap();
     if (!p?.center || !map) return;
-
     const coords = p.center;
+
     if (type === "from") {
       fromRef.current = coords;
       setFromCity(p.place_name);
@@ -100,15 +97,16 @@ export default function PlaneJourney() {
     map.flyTo({ center: coords, zoom: 5, duration: 800 });
   };
 
+  // 🔄 SWAP
   const swap = () => {
     const map = mapRef.current?.getMap();
-    const fc = fromRef.current;
+    const temp = fromRef.current;
     fromRef.current = toRef.current;
-    toRef.current = fc;
+    toRef.current = temp;
 
-    const fCity = fromCity;
+    const tempName = fromCity;
     setFromCity(toCity);
-    setToCity(fCity);
+    setToCity(tempName);
 
     if (map) {
       map.getSource("from-point")?.setData({
@@ -126,9 +124,7 @@ export default function PlaneJourney() {
     }
   };
 
-  // ==========================
   // 🧭 GENERATE ROUTE
-  // ==========================
   const generateRoute = () => {
     const from = fromRef.current;
     const to = toRef.current;
@@ -137,10 +133,10 @@ export default function PlaneJourney() {
 
     const great = turf.greatCircle(from, to, { npoints: 200 });
     const smooth = turf.bezierSpline(great, { resolution: 10000, sharpness: 0.85 });
-
     const totalKm = turf.length(smooth, { units: "kilometers" });
     const steps = Math.max(10, Math.floor(totalKm / 5));
     const coords = [];
+
     for (let i = 0; i <= steps; i++) {
       const d = (totalKm * i) / steps;
       const pt = turf.along(smooth, d, { units: "kilometers" });
@@ -148,57 +144,69 @@ export default function PlaneJourney() {
     }
 
     routeRef.current = coords;
-
     map.getSource("route")?.setData({
       type: "Feature",
       geometry: { type: "LineString", coordinates: coords },
     });
 
-    // fit bounds
+    const padding = window.innerWidth < 768 ? 80 : 120;
     map.fitBounds(
       [
         [Math.min(from[0], to[0]), Math.min(from[1], to[1])],
         [Math.max(from[0], to[0]), Math.max(from[1], to[1])],
       ],
-      { padding: 120, duration: 1200 }
+      { padding, duration: 1200 }
     );
   };
 
-  // ==========================
-  // 🎥 RECORDING
-  // ==========================
-  const startRecording = async (fps = 60, bitrate = 4_000_000) => {
+  // 🎥 RECORDING HANDLERS
+  const startRecording = async (fps = 60, bitrate = 5_000_000) => {
     const canvas = recordWrapRef.current?.querySelector("canvas");
-    if (!canvas) return;
+    if (!canvas) return alert("Canvas not found for recording");
     const stream = canvas.captureStream(fps);
     const rec = new MediaRecorder(stream, {
       mimeType: "video/webm;codecs=vp9",
       videoBitsPerSecond: bitrate,
     });
+
     chunksRef.current = [];
     rec.ondataavailable = (e) => e.data.size && chunksRef.current.push(e.data);
     rec.onstop = () => {
       const blob = new Blob(chunksRef.current, { type: "video/webm" });
       setVideoUrl(URL.createObjectURL(blob));
     };
-    rec.start();
+    rec.start(200);
     mediaRecorderRef.current = rec;
   };
-  const stopRecording = () => mediaRecorderRef.current?.stop();
 
-  // ==========================
-  // 🛫 START JOURNEY
-  // ==========================
+  const stopRecording = async () => {
+    const rec = mediaRecorderRef.current;
+    if (rec && rec.state === "recording") {
+      await new Promise((resolve) => {
+        rec.onstop = () => {
+          const blob = new Blob(chunksRef.current, { type: "video/webm" });
+          setVideoUrl(URL.createObjectURL(blob));
+          resolve();
+        };
+        rec.stop();
+      });
+    }
+  };
+
+  // 🛫 START JOURNEY (with responsive hide)
   const startJourney = async () => {
     const coords = routeRef.current;
     const map = mapRef.current?.getMap();
     if (!coords?.length || !map) return;
 
-    // kill any previous gsap timeline
     tlRef.current?.kill?.();
-
     setIsPlaying(true);
     setProgress(0);
+
+    if (window.innerWidth < 768) {
+      gsap.to(".control-panel", { y: "-110%", opacity: 0, duration: 0.6 });
+    }
+
     await startRecording();
 
     const totalKm = turf.length(
@@ -206,7 +214,6 @@ export default function PlaneJourney() {
       { units: "kilometers" }
     );
     const duration = Math.min(18, Math.max(8, totalKm / 180));
-
     animObj.current.i = 0;
 
     const tl = gsap.to(animObj.current, {
@@ -240,24 +247,25 @@ export default function PlaneJourney() {
           center: pos,
           bearing,
           pitch: 60,
+          zoom: window.innerWidth < 768 ? 5.5 : 4.5,
           duration: 200,
-          easing: (t) => t,
         });
 
         setProgress(Math.round((i / (coords.length - 1)) * 100));
       },
-      onComplete: () => {
-        stopRecording();
+      onComplete: async () => {
+        await stopRecording();
         setIsPlaying(false);
+        if (window.innerWidth < 768) {
+          gsap.to(".control-panel", { y: "0%", opacity: 1, duration: 0.6 });
+        }
       },
     });
 
     tlRef.current = tl;
   };
 
-  // ==========================
-  // 🗺️ MAP IMAGE + LAYERS SETUP (robust to style reloads)
-  // ==========================
+  // 🗺️ MAP SETUP
   const ensurePlaneIcon = (map) => {
     if (map.hasImage(PLANE_ICON)) return;
     map.loadImage(PLANE_ICON_URL, (err, img) => {
@@ -267,69 +275,49 @@ export default function PlaneJourney() {
     });
   };
 
-  const addSrc = (map, id, data) => {
-    if (!map.getSource(id)) map.addSource(id, data);
-  };
-  const addLayer = (map, id, config) => {
-    if (!map.getLayer(id)) map.addLayer(config);
-  };
-
   const setupLayers = (map) => {
-    // Points
-    addSrc(map, "from-point", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
-    addLayer(map, "from-layer", {
+    const addSrc = (id, data) => !map.getSource(id) && map.addSource(id, data);
+    const addLayer = (id, cfg) => !map.getLayer(id) && map.addLayer(cfg);
+
+    addSrc("from-point", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+    addLayer("from-layer", {
       id: "from-layer",
       type: "circle",
       source: "from-point",
       paint: { "circle-radius": 8, "circle-color": "#22c55e" },
     });
 
-    addSrc(map, "to-point", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
-    addLayer(map, "to-layer", {
+    addSrc("to-point", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+    addLayer("to-layer", {
       id: "to-layer",
       type: "circle",
       source: "to-point",
       paint: { "circle-radius": 8, "circle-color": "#3b82f6" },
     });
 
-    // Route
-    addSrc(map, "route", {
+    addSrc("route", {
       type: "geojson",
       data: { type: "Feature", geometry: { type: "LineString", coordinates: [] } },
     });
-    addLayer(map, "route-layer", {
+    addLayer("route-layer", {
       id: "route-layer",
       type: "line",
       source: "route",
-      layout: { "line-cap": "round", "line-join": "round" },
-      paint: {
-        "line-color": "#00ffff",
-        "line-width": 5,
-        "line-opacity": 0.9,
-        "line-blur": 0.3,
-      },
+      paint: { "line-color": "#00ffff", "line-width": 5, "line-opacity": 0.9 },
     });
 
-    // Tail
-    addSrc(map, "tail", {
+    addSrc("tail", {
       type: "geojson",
       data: { type: "Feature", geometry: { type: "LineString", coordinates: [] } },
     });
-    addLayer(map, "tail-layer", {
+    addLayer("tail-layer", {
       id: "tail-layer",
       type: "line",
       source: "tail",
-      layout: { "line-cap": "round", "line-join": "round" },
-      paint: {
-        "line-color": "#ffd369",
-        "line-width": 7,
-        "line-opacity": 0.6,
-        "line-blur": 2.5,
-      },
+      paint: { "line-color": "#ffd369", "line-width": 7, "line-opacity": 0.6 },
     });
 
-    // Plane symbol
-    addSrc(map, "vehicle-point", {
+    addSrc("vehicle-point", {
       type: "geojson",
       data: {
         type: "FeatureCollection",
@@ -342,7 +330,7 @@ export default function PlaneJourney() {
         ],
       },
     });
-    addLayer(map, "vehicle-layer", {
+    addLayer("vehicle-layer", {
       id: "vehicle-layer",
       type: "symbol",
       source: "vehicle-point",
@@ -357,41 +345,27 @@ export default function PlaneJourney() {
   };
 
   const handleMapLoad = (e) => {
-    const map = e.target; // mapbox-gl Map
-
-    // 1) make sure icon exists (prevents "Image could not be loaded" errors)
+    const map = e.target;
     ensurePlaneIcon(map);
-
-    // 2) (Re)build sources/layers whenever style reloads
     setupLayers(map);
-    map.on("style.load", () => {
-      ensurePlaneIcon(map);
-      setupLayers(map);
-    });
-
-    // 3) If style ever asks for our icon (sprite missing), add it on-demand
-    map.on("styleimagemissing", (ev) => {
-      if (ev.id === PLANE_ICON) ensurePlaneIcon(map);
-    });
   };
 
-  // cleanup GSAP + recorder on unmount
   useEffect(() => {
     return () => {
       tlRef.current?.kill?.();
-      mediaRecorderRef.current?.state === "recording" && mediaRecorderRef.current.stop();
+      mediaRecorderRef.current?.stop?.();
     };
   }, []);
 
-  // ==========================
-  // 🎛️ UI
-  // ==========================
+  // 🧠 UI
   return (
-    <div className="relative w-full h-screen bg-black text-sm">
-      <div className="absolute top-4 left-4 z-20 w-[92vw] max-w-[420px]">
+    <div className="relative w-full h-screen bg-black text-sm overflow-hidden">
+      {/* Control Panel */}
+      <div className="control-panel absolute top-4 left-4 z-20 w-[92vw] max-w-[420px] transition-all">
         <div className="bg-white/70 backdrop-blur-xl border border-white/30 p-4 rounded-2xl shadow-lg">
           <h2 className="font-semibold text-lg mb-2">✈️ Plane Journey Visualizer</h2>
 
+          {/* Inputs */}
           <input
             type="text"
             value={fromCity}
@@ -399,7 +373,10 @@ export default function PlaneJourney() {
               const val = e.target.value;
               setFromCity(val);
               clearTimeout(debounceRef.current.from);
-              debounceRef.current.from = setTimeout(() => fetchSuggestions(val, setFromSug), 250);
+              debounceRef.current.from = setTimeout(
+                () => fetchSuggestions(val, setFromSug),
+                250
+              );
             }}
             placeholder="From City / Airport"
             className="w-full border rounded-xl px-3 py-2 mb-2 focus:ring-2 focus:ring-blue-400"
@@ -407,7 +384,11 @@ export default function PlaneJourney() {
           {fromSug.length > 0 && (
             <ul className="border rounded-xl bg-white max-h-40 overflow-y-auto mb-2">
               {fromSug.map((p) => (
-                <li key={p.id} className="px-3 py-2 hover:bg-gray-100 cursor-pointer" onClick={() => selectPlace(p, "from")}>
+                <li
+                  key={p.id}
+                  className="px-3 py-2 hover:bg-gray-100 cursor-pointer"
+                  onClick={() => selectPlace(p, "from")}
+                >
                   {p.place_name}
                 </li>
               ))}
@@ -421,7 +402,10 @@ export default function PlaneJourney() {
               const val = e.target.value;
               setToCity(val);
               clearTimeout(debounceRef.current.to);
-              debounceRef.current.to = setTimeout(() => fetchSuggestions(val, setToSug), 250);
+              debounceRef.current.to = setTimeout(
+                () => fetchSuggestions(val, setToSug),
+                250
+              );
             }}
             placeholder="To City / Airport"
             className="w-full border rounded-xl px-3 py-2 mb-2 focus:ring-2 focus:ring-blue-400"
@@ -429,53 +413,99 @@ export default function PlaneJourney() {
           {toSug.length > 0 && (
             <ul className="border rounded-xl bg-white max-h-40 overflow-y-auto mb-2">
               {toSug.map((p) => (
-                <li key={p.id} className="px-3 py-2 hover:bg-gray-100 cursor-pointer" onClick={() => selectPlace(p, "to")}>
+                <li
+                  key={p.id}
+                  className="px-3 py-2 hover:bg-gray-100 cursor-pointer"
+                  onClick={() => selectPlace(p, "to")}
+                >
                   {p.place_name}
                 </li>
               ))}
             </ul>
           )}
 
+          {/* Buttons */}
           <div className="flex gap-2 mt-2">
             <Btn onClick={generateRoute}>Show Route</Btn>
             <Btn onClick={startJourney} disabled={isPlaying}>
               {isPlaying ? "Recording..." : "Start Journey"}
             </Btn>
-            <Btn onClick={swap} variant="ghost">↔️</Btn>
+            <Btn onClick={swap} variant="ghost">
+              ↔️
+            </Btn>
           </div>
 
+          {/* Progress Bar */}
           <div className="mt-3">
             <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
-              <div className="h-full bg-blue-600 transition-all" style={{ width: `${progress}%` }} />
+              <div
+                className="h-full bg-blue-600 transition-all"
+                style={{ width: `${progress}%` }}
+              />
             </div>
             <p className="text-xs mt-1 text-gray-600">{progress}% complete</p>
           </div>
 
+          {/* 🎥 Video Preview + Actions */}
           {videoUrl && (
             <div className="mt-4 border rounded-xl p-3 bg-white/80">
               <video src={videoUrl} controls className="rounded-lg w-full mb-2" />
               <div className="flex gap-2">
-                <Btn onClick={() => { const a = document.createElement("a"); a.href = videoUrl; a.download = "my-flight.webm"; a.click(); }}>💾 Save</Btn>
-                <Btn variant="secondary" onClick={async () => {
-                  try {
-                    if (navigator.canShare && navigator.canShare({ url: videoUrl })) {
-                      await navigator.share({ url: videoUrl, title: "My Air Journey" });
-                    } else {
-                      alert("Sharing not supported.");
-                    }
-                  } catch {}
-                }}>📤 Share</Btn>
-                <Btn variant="ghost" onClick={() => setVideoUrl(null)}>❌ Close</Btn>
+                <Btn
+                  onClick={() => {
+                    const a = document.createElement("a");
+                    a.href = videoUrl;
+                    a.download = "my-flight.webm";
+                    a.click();
+                  }}
+                >
+                  💾 Save
+                </Btn>
+                <Btn
+                  variant="secondary"
+                  onClick={async () => {
+                    try {
+                      if (navigator.canShare && navigator.canShare({ url: videoUrl })) {
+                        await navigator.share({ url: videoUrl, title: "My Air Journey" });
+                      } else {
+                        alert("Sharing not supported.");
+                      }
+                    } catch {}
+                  }}
+                >
+                  📤 Share
+                </Btn>
+                <Btn variant="ghost" onClick={() => setVideoUrl(null)}>
+                  ❌ Close
+                </Btn>
               </div>
             </div>
           )}
         </div>
       </div>
 
+      {/* Compact Progress Bar (Mobile) */}
+      {isPlaying && (
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-30 w-[90vw] md:hidden">
+          <div className="h-3 bg-gray-800/50 rounded-full overflow-hidden shadow-lg backdrop-blur-md">
+            <div
+              className="h-full bg-blue-500 transition-all"
+              style={{ width: `${progress}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Map */}
       <div ref={recordWrapRef} className="absolute inset-0">
         <Map
           ref={mapRef}
-          initialViewState={{ longitude: 77.1025, latitude: 28.7041, zoom: 3.2, pitch: 45 }}
+          initialViewState={{
+            longitude: 77.1025,
+            latitude: 28.7041,
+            zoom: 3.2,
+            pitch: 45,
+          }}
           mapStyle="mapbox://styles/mapbox/satellite-streets-v12"
           mapboxAccessToken={MAPBOX_TOKEN}
           style={{ width: "100%", height: "100%" }}
