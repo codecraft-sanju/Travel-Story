@@ -162,10 +162,10 @@ export default function App() {
     rec.onstop = () => {
       const blob = new Blob(chunksRef.current, { type: "video/webm" });
       setVideoUrl(URL.createObjectURL(blob));
-      document.body.style.overflow = "auto"; // ✅ allow scroll after video
+      document.body.style.overflow = "auto"; 
     };
-    rec.start(200);
-    document.body.style.overflow = "hidden"; // prevent during record
+    rec.start(100); // smoother capture
+    document.body.style.overflow = "hidden"; 
     mediaRecorderRef.current = rec;
   };
 
@@ -195,13 +195,16 @@ export default function App() {
     if (window.innerWidth < 768) {
       gsap.to(".control-panel", { y: "-110%", opacity: 0, duration: 0.6 });
     }
+
     await startRecording();
+
     const totalKm = turf.length(
       { type: "Feature", geometry: { type: "LineString", coordinates: coords } },
       { units: "kilometers" }
     );
     const duration = Math.min(18, Math.max(8, totalKm / 180));
     animObj.current.i = 0;
+
     const tl = gsap.to(animObj.current, {
       i: coords.length - 1,
       duration,
@@ -236,13 +239,27 @@ export default function App() {
         setProgress(Math.round((i / (coords.length - 1)) * 100));
       },
       onComplete: async () => {
-        await stopRecording();
-        setIsPlaying(false);
-        if (window.innerWidth < 768) {
-          gsap.to(".control-panel", { y: "0%", opacity: 1, duration: 0.6 });
-        }
+        // 🎬 Add smooth cinematic landing and delayed recording stop
+        const lastPos = coords[coords.length - 1];
+        map.easeTo({
+          center: lastPos,
+          zoom: 5.2,
+          pitch: 20,
+          bearing: 0,
+          duration: 2000,
+        });
+
+        const buffer = Math.max(1200, duration * 200); // dynamic wait
+        setTimeout(async () => {
+          await stopRecording();
+          setIsPlaying(false);
+          if (window.innerWidth < 768) {
+            gsap.to(".control-panel", { y: "0%", opacity: 1, duration: 0.6 });
+          }
+        }, buffer);
       },
     });
+
     tlRef.current = tl;
   };
 
