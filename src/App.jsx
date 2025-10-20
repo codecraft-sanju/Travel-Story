@@ -9,7 +9,7 @@ const PLANE_ICON = "plane-icon";
 const PLANE_ICON_SIZE = 0.16;
 const PLANE_ICON_URL = "/plane.png";
 
-// 🔘 Reusable Button Component
+// 🔘 Button Component
 const Btn = ({ children, onClick, variant = "primary", disabled }) => {
   const base =
     "px-4 py-2 rounded-xl backdrop-blur border transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed";
@@ -48,11 +48,10 @@ export default function App() {
   const animObj = useRef({ i: 0 });
   const debounceRef = useRef({ from: null, to: null });
   const tlRef = useRef(null);
-
   const fromRef = useRef(null);
   const toRef = useRef(null);
 
-  // 🌍 FETCH CITY SUGGESTIONS
+  // 🌍 Fetch Suggestions
   const fetchSuggestions = async (query, setList) => {
     if (!query?.trim()) return setList([]);
     try {
@@ -70,12 +69,11 @@ export default function App() {
     }
   };
 
-  // 📍 SELECT CITY
+  // 📍 Select City
   const selectPlace = (p, type) => {
     const map = mapRef.current?.getMap();
     if (!p?.center || !map) return;
     const coords = p.center;
-
     if (type === "from") {
       fromRef.current = coords;
       setFromCity(p.place_name);
@@ -93,21 +91,16 @@ export default function App() {
         features: [{ type: "Feature", geometry: { type: "Point", coordinates: coords } }],
       });
     }
-
     map.flyTo({ center: coords, zoom: 5, duration: 800 });
   };
 
-  // 🔄 SWAP
+  // 🔄 Swap
   const swap = () => {
     const map = mapRef.current?.getMap();
-    const temp = fromRef.current;
-    fromRef.current = toRef.current;
-    toRef.current = temp;
-
-    const tempName = fromCity;
-    setFromCity(toCity);
-    setToCity(tempName);
-
+    [fromRef.current, toRef.current] = [toRef.current, fromRef.current];
+    [setFromCity, setToCity].forEach((setFn, i) =>
+      setFn(i === 0 ? toCity : fromCity)
+    );
     if (map) {
       map.getSource("from-point")?.setData({
         type: "FeatureCollection",
@@ -124,32 +117,28 @@ export default function App() {
     }
   };
 
-  // 🧭 GENERATE ROUTE
+  // 🧭 Generate Route
   const generateRoute = () => {
     const from = fromRef.current;
     const to = toRef.current;
     const map = mapRef.current?.getMap();
     if (!from || !to || !map) return;
-
     const great = turf.greatCircle(from, to, { npoints: 200 });
     const smooth = turf.bezierSpline(great, { resolution: 10000, sharpness: 0.85 });
     const totalKm = turf.length(smooth, { units: "kilometers" });
     const steps = Math.max(10, Math.floor(totalKm / 5));
     const coords = [];
-
     for (let i = 0; i <= steps; i++) {
       const d = (totalKm * i) / steps;
       const pt = turf.along(smooth, d, { units: "kilometers" });
       coords.push(pt.geometry.coordinates);
     }
-
     routeRef.current = coords;
     map.getSource("route")?.setData({
       type: "Feature",
       geometry: { type: "LineString", coordinates: coords },
     });
-
-    const padding = window.innerWidth < 768 ? 80 : 120;
+    const padding = window.innerWidth < 768 ? 60 : 120;
     map.fitBounds(
       [
         [Math.min(from[0], to[0]), Math.min(from[1], to[1])],
@@ -159,23 +148,24 @@ export default function App() {
     );
   };
 
-  // 🎥 RECORDING HANDLERS
+  // 🎥 Recording
   const startRecording = async (fps = 60, bitrate = 5_000_000) => {
     const canvas = recordWrapRef.current?.querySelector("canvas");
-    if (!canvas) return alert("Canvas not found for recording");
+    if (!canvas) return alert("Canvas not found");
     const stream = canvas.captureStream(fps);
     const rec = new MediaRecorder(stream, {
       mimeType: "video/webm;codecs=vp9",
       videoBitsPerSecond: bitrate,
     });
-
     chunksRef.current = [];
     rec.ondataavailable = (e) => e.data.size && chunksRef.current.push(e.data);
     rec.onstop = () => {
       const blob = new Blob(chunksRef.current, { type: "video/webm" });
       setVideoUrl(URL.createObjectURL(blob));
+      document.body.style.overflow = "auto"; // ✅ allow scroll after video
     };
     rec.start(200);
+    document.body.style.overflow = "hidden"; // prevent during record
     mediaRecorderRef.current = rec;
   };
 
@@ -186,6 +176,7 @@ export default function App() {
         rec.onstop = () => {
           const blob = new Blob(chunksRef.current, { type: "video/webm" });
           setVideoUrl(URL.createObjectURL(blob));
+          document.body.style.overflow = "auto";
           resolve();
         };
         rec.stop();
@@ -193,29 +184,24 @@ export default function App() {
     }
   };
 
-  // 🛫 START JOURNEY (with responsive hide)
+  // 🛫 Start Journey
   const startJourney = async () => {
     const coords = routeRef.current;
     const map = mapRef.current?.getMap();
     if (!coords?.length || !map) return;
-
     tlRef.current?.kill?.();
     setIsPlaying(true);
     setProgress(0);
-
     if (window.innerWidth < 768) {
       gsap.to(".control-panel", { y: "-110%", opacity: 0, duration: 0.6 });
     }
-
     await startRecording();
-
     const totalKm = turf.length(
       { type: "Feature", geometry: { type: "LineString", coordinates: coords } },
       { units: "kilometers" }
     );
     const duration = Math.min(18, Math.max(8, totalKm / 180));
     animObj.current.i = 0;
-
     const tl = gsap.to(animObj.current, {
       i: coords.length - 1,
       duration,
@@ -225,13 +211,11 @@ export default function App() {
         const pos = coords[i];
         const next = coords[i + 1] || pos;
         const bearing = turf.bearing(turf.point(pos), turf.point(next));
-
         const tail = coords.slice(Math.max(0, i - 15), i + 1);
         map.getSource("tail")?.setData({
           type: "Feature",
           geometry: { type: "LineString", coordinates: tail },
         });
-
         map.getSource("vehicle-point")?.setData({
           type: "FeatureCollection",
           features: [
@@ -242,7 +226,6 @@ export default function App() {
             },
           ],
         });
-
         map.easeTo({
           center: pos,
           bearing,
@@ -250,7 +233,6 @@ export default function App() {
           zoom: window.innerWidth < 768 ? 5.5 : 4.5,
           duration: 200,
         });
-
         setProgress(Math.round((i / (coords.length - 1)) * 100));
       },
       onComplete: async () => {
@@ -261,11 +243,10 @@ export default function App() {
         }
       },
     });
-
     tlRef.current = tl;
   };
 
-  // 🗺️ MAP SETUP
+  // 🗺️ Map Setup
   const ensurePlaneIcon = (map) => {
     if (map.hasImage(PLANE_ICON)) return;
     map.loadImage(PLANE_ICON_URL, (err, img) => {
@@ -278,7 +259,6 @@ export default function App() {
   const setupLayers = (map) => {
     const addSrc = (id, data) => !map.getSource(id) && map.addSource(id, data);
     const addLayer = (id, cfg) => !map.getLayer(id) && map.addLayer(cfg);
-
     addSrc("from-point", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
     addLayer("from-layer", {
       id: "from-layer",
@@ -286,7 +266,6 @@ export default function App() {
       source: "from-point",
       paint: { "circle-radius": 8, "circle-color": "#22c55e" },
     });
-
     addSrc("to-point", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
     addLayer("to-layer", {
       id: "to-layer",
@@ -294,7 +273,6 @@ export default function App() {
       source: "to-point",
       paint: { "circle-radius": 8, "circle-color": "#3b82f6" },
     });
-
     addSrc("route", {
       type: "geojson",
       data: { type: "Feature", geometry: { type: "LineString", coordinates: [] } },
@@ -305,7 +283,6 @@ export default function App() {
       source: "route",
       paint: { "line-color": "#00ffff", "line-width": 5, "line-opacity": 0.9 },
     });
-
     addSrc("tail", {
       type: "geojson",
       data: { type: "Feature", geometry: { type: "LineString", coordinates: [] } },
@@ -316,7 +293,6 @@ export default function App() {
       source: "tail",
       paint: { "line-color": "#ffd369", "line-width": 7, "line-opacity": 0.6 },
     });
-
     addSrc("vehicle-point", {
       type: "geojson",
       data: {
@@ -354,6 +330,7 @@ export default function App() {
     return () => {
       tlRef.current?.kill?.();
       mediaRecorderRef.current?.stop?.();
+      document.body.style.overflow = "auto";
     };
   }, []);
 
@@ -362,10 +339,8 @@ export default function App() {
     <div className="relative w-full h-screen bg-black text-sm overflow-hidden">
       {/* Control Panel */}
       <div className="control-panel absolute top-4 left-4 z-20 w-[92vw] max-w-[420px] transition-all">
-        <div className="bg-white/70 backdrop-blur-xl border border-white/30 p-4 rounded-2xl shadow-lg">
+        <div className="bg-white/70 backdrop-blur-xl border border-white/30 p-4 rounded-2xl shadow-lg overflow-y-auto max-h-[85vh] md:max-h-[90vh]">
           <h2 className="font-semibold text-lg mb-2">✈️ Plane Journey Visualizer</h2>
-
-          {/* Inputs */}
           <input
             type="text"
             value={fromCity}
@@ -394,7 +369,6 @@ export default function App() {
               ))}
             </ul>
           )}
-
           <input
             type="text"
             value={toCity}
@@ -425,7 +399,7 @@ export default function App() {
           )}
 
           {/* Buttons */}
-          <div className="flex gap-2 mt-2">
+          <div className="flex gap-2 mt-2 flex-wrap">
             <Btn onClick={generateRoute}>Show Route</Btn>
             <Btn onClick={startJourney} disabled={isPlaying}>
               {isPlaying ? "Recording..." : "Start Journey"}
@@ -435,7 +409,7 @@ export default function App() {
             </Btn>
           </div>
 
-          {/* Progress Bar */}
+          {/* Progress */}
           <div className="mt-3">
             <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
               <div
@@ -446,11 +420,11 @@ export default function App() {
             <p className="text-xs mt-1 text-gray-600">{progress}% complete</p>
           </div>
 
-          {/* 🎥 Video Preview + Actions */}
+          {/* Video Modal */}
           {videoUrl && (
-            <div className="mt-4 border rounded-xl p-3 bg-white/80">
-              <video src={videoUrl} controls className="rounded-lg w-full mb-2" />
-              <div className="flex gap-2">
+            <div className="mt-4 border rounded-xl p-3 bg-white/90 shadow-lg overflow-y-auto max-h-[60vh]">
+              <video src={videoUrl} controls className="rounded-lg w-full mb-3" />
+              <div className="flex gap-2 flex-wrap">
                 <Btn
                   onClick={() => {
                     const a = document.createElement("a");
@@ -468,7 +442,7 @@ export default function App() {
                       if (navigator.canShare && navigator.canShare({ url: videoUrl })) {
                         await navigator.share({ url: videoUrl, title: "My Air Journey" });
                       } else {
-                        alert("Sharing not supported.");
+                        alert("Sharing not supported on this device.");
                       }
                     } catch {}
                   }}
@@ -484,7 +458,7 @@ export default function App() {
         </div>
       </div>
 
-      {/* Compact Progress Bar (Mobile) */}
+      {/* Compact progress bar (mobile) */}
       {isPlaying && (
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-30 w-[90vw] md:hidden">
           <div className="h-3 bg-gray-800/50 rounded-full overflow-hidden shadow-lg backdrop-blur-md">
