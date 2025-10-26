@@ -1,7 +1,14 @@
-import React, { useRef, useState, useEffect } from "react";
+import React, {
+  useRef,
+  useState,
+  useEffect,
+  useMemo,
+  useCallback,
+} from "react";
 import axios from "axios";
 import { gsap } from "gsap";
 import * as turf from "@turf/turf";
+import debounce from "lodash.debounce";
 
 // 🧩 components
 import Btn from "./components/Btn";
@@ -11,6 +18,7 @@ import MapView from "./components/MapView";
 import { isMobileFn, getZoom, getPitch } from "./utils/helpers";
 import { fcPoint, emptyFC, fcVehicle } from "./utils/mapUtils";
 
+// 🧱 constants
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN;
 const PLANE_ICON = "plane-icon";
 const PLANE_ICON_SIZE = 0.16;
@@ -27,6 +35,7 @@ export default function App() {
   const [progress, setProgress] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [videoUrl, setVideoUrl] = useState(null);
+  const [isLoadingRoute, setIsLoadingRoute] = useState(false);
 
   const [fps, setFps] = useState(60);
   const [bitrate, setBitrate] = useState(5_000_000);
@@ -52,25 +61,33 @@ export default function App() {
   const toRef = useRef(null);
 
   // =============================
-  // 🌍 Fetch Suggestions
+  // 🌍 Fetch Suggestions (Debounced)
   // =============================
-  const fetchSuggestions = async (query, setList) => {
+  const fetchSuggestions = useCallback(async (query, setList) => {
     if (!query?.trim()) return setList([]);
     try {
       const res = await axios.get(
-        `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json`,
+        `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(
+          query
+        )}.json`,
         { params: { access_token: MAPBOX_TOKEN, autocomplete: true, limit: 6 } }
       );
       setList(res.data.features || []);
-    } catch {
+    } catch (err) {
+      console.error(err);
       setList([]);
     }
-  };
+  }, []);
+
+  const debouncedFetch = useMemo(
+    () => debounce(fetchSuggestions, 400),
+    [fetchSuggestions]
+  );
 
   // =============================
   // 🗺️ Place Selection + Swap
   // =============================
-  const selectPlace = (p, type) => {
+  const selectPlace = useCallback((p, type) => {
     const map = mapRef.current?.getMap?.();
     if (!p?.center || !map) return;
     const coords = p.center;
@@ -86,9 +103,9 @@ export default function App() {
       map.getSource("to-point")?.setData(fcPoint(coords));
     }
     map.flyTo({ center: coords, zoom: 5, duration: 800 });
-  };
+  }, []);
 
-  const swap = () => {
+  const swap = useCallback(() => {
     const map = mapRef.current?.getMap?.();
     [fromRef.current, toRef.current] = [toRef.current, fromRef.current];
     setFromCity((prev) => {
@@ -100,16 +117,19 @@ export default function App() {
       map.getSource("from-point")?.setData(fromRef.current ? fcPoint(fromRef.current) : emptyFC());
       map.getSource("to-point")?.setData(toRef.current ? fcPoint(toRef.current) : emptyFC());
     }
-  };
+  }, [toCity]);
 
   // =============================
   // 🧭 Route Generation
   // =============================
-  const generateRoute = () => {
+  const generateRoute = useCallback(() => {
     const from = fromRef.current;
     const to = toRef.current;
     const map = mapRef.current?.getMap?.();
     if (!from || !to || !map) return alert("Pick both places first.");
+
+    setIsLoadingRoute(true);
+    setTimeout(() => setIsLoadingRoute(false), 1200);
 
     const great = turf.greatCircle(from, to, { npoints: 200 });
     const smooth = turf.bezierSpline(great, { resolution: 10_000, sharpness: 0.85 });
@@ -124,17 +144,15 @@ export default function App() {
     }
     routeRef.current = coords;
 
-    // 🗺️ Draw route
     map.getSource("route")?.setData({
       type: "Feature",
       geometry: { type: "LineString", coordinates: coords },
     });
 
-    // === 📍 Add route label text — fixed top area for all devices
+    // === 📍 Add route label text
     const centerLon = (from[0] + to[0]) / 2;
     const maxLat = Math.max(from[1], to[1]);
-    const labelLat = maxLat + 5; // push top enough to always show
-    const labelPoint = [centerLon, labelLat];
+    const labelPoint = [centerLon, maxLat + 5];
     const labelText = `📍 ${fromCity.split(",")[0]} → ${toCity.split(",")[0]}`;
 
     if (map.getLayer("route-label")) map.removeLayer("route-label");
@@ -172,7 +190,6 @@ export default function App() {
       },
     });
 
-    // Small fade animation
     gsap.fromTo(
       map.getCanvas(),
       { opacity: 0.8 },
@@ -185,12 +202,12 @@ export default function App() {
       [Math.max(from[0], to[0]), Math.max(from[1], to[1])],
     ];
     map.fitBounds(bounds, { padding, duration: 1200 });
-  };
+  }, [fromCity, toCity, isMobile]);
 
   // =============================
   // 🎥 Recording Logic
   // =============================
-  const startRecording = async () => {
+  const startRecording = useCallback(async () => {
     const canvas = recordWrapRef.current?.querySelector("canvas");
     if (!canvas) return alert("Canvas not found");
 
@@ -233,9 +250,9 @@ export default function App() {
     document.body.style.overflow = "hidden";
     mediaRecorderRef.current = rec;
     rec.start(100);
-  };
+  }, [fps, bitrate, isMobile]);
 
-  const stopRecording = async () => {
+  const stopRecording = useCallback(async () => {
     const rec = mediaRecorderRef.current;
     if (rec && rec.state === "recording") {
       await new Promise((resolve) => {
@@ -247,12 +264,12 @@ export default function App() {
         rec.stop();
       });
     }
-  };
+  }, []);
 
   // =============================
   // ✈️ Journey Animation
   // =============================
-  const startJourney = async () => {
+  const startJourney = useCallback(async () => {
     const coords = routeRef.current;
     const map = mapRef.current?.getMap?.();
     if (!coords?.length || !map) return alert("Make the route first.");
@@ -329,9 +346,9 @@ export default function App() {
     });
 
     tlRef.current = tl;
-  };
+  }, [isMobile, startRecording, stopRecording, zoomMobileOverride, zoomDesktopOverride]);
 
-  const stopJourneyNow = async () => {
+  const stopJourneyNow = useCallback(async () => {
     tlRef.current?.kill?.();
     setIsPlaying(false);
     await stopRecording();
@@ -339,7 +356,7 @@ export default function App() {
       setSheetOpen(true);
       gsap.to(".bottom-sheet", { y: "0%", opacity: 1, duration: 0.45, ease: "power2.out" });
     }
-  };
+  }, [isMobile, stopRecording]);
 
   // =============================
   // 🧱 Map Setup
@@ -449,6 +466,12 @@ export default function App() {
   // =============================
   return (
     <div className="relative w-full h-screen bg-black text-sm overflow-hidden">
+      {isLoadingRoute && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-black/60 text-white px-3 py-2 rounded-xl text-xs animate-pulse z-50">
+          Generating Route...
+        </div>
+      )}
+
       <InputsPanel
         {...{
           fromCity,
@@ -459,7 +482,7 @@ export default function App() {
           toSug,
           selectPlace,
           swap,
-          fetchSuggestions,
+          fetchSuggestions: debouncedFetch,
           generateRoute,
           startJourney,
           stopJourneyNow,
@@ -493,7 +516,7 @@ export default function App() {
           setToSug,
           selectPlace,
           swap,
-          fetchSuggestions,
+          fetchSuggestions: debouncedFetch,
           generateRoute,
           startJourney,
           stopJourneyNow,
