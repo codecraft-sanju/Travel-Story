@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect, useMemo } from "react";
+import React, { useRef, useState, useEffect } from "react";
 import axios from "axios";
 import { gsap } from "gsap";
 import * as turf from "@turf/turf";
@@ -124,10 +124,60 @@ export default function App() {
     }
     routeRef.current = coords;
 
+    // 🗺️ Draw route
     map.getSource("route")?.setData({
       type: "Feature",
       geometry: { type: "LineString", coordinates: coords },
     });
+
+    // === 📍 Add route label text — fixed top area for all devices
+    const centerLon = (from[0] + to[0]) / 2;
+    const maxLat = Math.max(from[1], to[1]);
+    const labelLat = maxLat + 5; // push top enough to always show
+    const labelPoint = [centerLon, labelLat];
+    const labelText = `📍 ${fromCity.split(",")[0]} → ${toCity.split(",")[0]}`;
+
+    if (map.getLayer("route-label")) map.removeLayer("route-label");
+    if (map.getSource("route-label")) map.removeSource("route-label");
+
+    map.addSource("route-label", {
+      type: "geojson",
+      data: {
+        type: "FeatureCollection",
+        features: [
+          {
+            type: "Feature",
+            geometry: { type: "Point", coordinates: labelPoint },
+            properties: { title: labelText },
+          },
+        ],
+      },
+    });
+
+    map.addLayer({
+      id: "route-label",
+      type: "symbol",
+      source: "route-label",
+      layout: {
+        "text-field": ["get", "title"],
+        "text-size": isMobile ? 17 : 22,
+        "text-anchor": "top",
+        "text-offset": [0, 0.5],
+        "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
+      },
+      paint: {
+        "text-color": "#ffffff",
+        "text-halo-color": "#000000",
+        "text-halo-width": 2.5,
+      },
+    });
+
+    // Small fade animation
+    gsap.fromTo(
+      map.getCanvas(),
+      { opacity: 0.8 },
+      { opacity: 1, duration: 0.6, ease: "power2.out" }
+    );
 
     const padding = isMobile ? 70 : 140;
     const bounds = [
@@ -296,7 +346,6 @@ export default function App() {
   // =============================
   const ensurePlaneIcon = (map) => {
     if (map.hasImage(PLANE_ICON)) return;
-
     map.loadImage(PLANE_ICON_URL, (err, img) => {
       if (!err && img && !map.hasImage(PLANE_ICON)) {
         map.addImage(PLANE_ICON, img, { pixelRatio: 2 });
@@ -342,7 +391,10 @@ export default function App() {
       paint: { "line-color": "#ffd369", "line-width": 7, "line-opacity": 0.6 },
     });
 
-    addSrc("vehicle-point", { type: "geojson", data: fcVehicle([0, 0], 0, PLANE_ICON, PLANE_ICON_SIZE) });
+    addSrc("vehicle-point", {
+      type: "geojson",
+      data: fcVehicle([0, 0], 0, PLANE_ICON, PLANE_ICON_SIZE),
+    });
     addLayer("vehicle-layer", {
       type: "symbol",
       source: "vehicle-point",
@@ -368,7 +420,6 @@ export default function App() {
   useEffect(() => {
     const onResize = () => setIsMobile(isMobileFn());
     window.addEventListener("resize", onResize);
-
     const vv = window.visualViewport;
     let baseH = vv ? vv.height : window.innerHeight;
     const onVV = () => {
@@ -384,7 +435,6 @@ export default function App() {
     };
   }, [isMobile]);
 
-  // cleanup
   useEffect(() => {
     return () => {
       tlRef.current?.kill?.();
@@ -399,7 +449,6 @@ export default function App() {
   // =============================
   return (
     <div className="relative w-full h-screen bg-black text-sm overflow-hidden">
-      {/* Desktop */}
       <InputsPanel
         {...{
           fromCity,
@@ -430,48 +479,47 @@ export default function App() {
         }}
       />
 
-      {/* Mobile */}
-     <MobileSheet
-  {...{
-    sheetOpen,
-    setSheetOpen,
-    fromCity,
-    setFromCity,
-    toCity,
-    setToCity,
-    fromSug,
-    setFromSug,     // ✅ ADD THIS LINE
-    toSug,
-    setToSug,       // ✅ ADD THIS LINE
-    selectPlace,
-    swap,
-    fetchSuggestions,
-    generateRoute,
-    startJourney,
-    stopJourneyNow,
-    isPlaying,
-    progress,
-    fps,
-    setFps,
-    bitrate,
-    setBitrate,
-    zoomMobileOverride,
-    setZoomMobileOverride,
-    zoomDesktopOverride,
-    setZoomDesktopOverride,
-    videoUrl,
-    setVideoUrl,
-    debounceRef,
-  }}
-/>
+      <MobileSheet
+        {...{
+          sheetOpen,
+          setSheetOpen,
+          fromCity,
+          setFromCity,
+          toCity,
+          setToCity,
+          fromSug,
+          setFromSug,
+          toSug,
+          setToSug,
+          selectPlace,
+          swap,
+          fetchSuggestions,
+          generateRoute,
+          startJourney,
+          stopJourneyNow,
+          isPlaying,
+          progress,
+          fps,
+          setFps,
+          bitrate,
+          setBitrate,
+          zoomMobileOverride,
+          setZoomMobileOverride,
+          zoomDesktopOverride,
+          setZoomDesktopOverride,
+          videoUrl,
+          setVideoUrl,
+          debounceRef,
+        }}
+      />
 
-
-      {/* Map */}
       <MapView
         mapRef={mapRef}
         onLoad={handleMapLoad}
         MAPBOX_TOKEN={MAPBOX_TOKEN}
         recordWrapRef={recordWrapRef}
+        fromCity={fromCity}
+        toCity={toCity}
       />
     </div>
   );

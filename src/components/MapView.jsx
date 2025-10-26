@@ -1,9 +1,23 @@
 import React from "react";
 import Map from "react-map-gl";
 
-export default function MapView({ mapRef, onLoad, MAPBOX_TOKEN, recordWrapRef }) {
+export default function MapView({
+  mapRef,
+  onLoad,
+  MAPBOX_TOKEN,
+  recordWrapRef,
+  fromCity,
+  toCity,
+}) {
   return (
     <div ref={recordWrapRef} className="absolute inset-0">
+      {/* 📍 Overlay Text (shows on map + in recorded video) */}
+      {fromCity && toCity && (
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-black/60 text-white px-4 py-1.5 rounded-full text-sm font-medium z-20 backdrop-blur-sm shadow-md pointer-events-none">
+          📍 {fromCity.split(",")[0]} → {toCity.split(",")[0]}
+        </div>
+      )}
+
       <Map
         ref={mapRef}
         initialViewState={{
