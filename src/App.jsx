@@ -39,7 +39,7 @@ export default function App() {
 
   const [fps, setFps] = useState(60);
   const [bitrate, setBitrate] = useState(5_000_000);
-  const [zoomMobileOverride, setZoomMobileOverride] = useState(5.7);
+  const [zoomMobileOverride, setZoomMobileOverride] = useState(7);
   const [zoomDesktopOverride, setZoomDesktopOverride] = useState(4.6);
 
   const [isMobile, setIsMobile] = useState(isMobileFn());
@@ -392,11 +392,22 @@ export default function App() {
       type: "geojson",
       data: { type: "Feature", geometry: { type: "LineString", coordinates: [] } },
     });
-    addLayer("route-layer", {
-      type: "line",
-      source: "route",
-      paint: { "line-color": "#00ffff", "line-width": 5, "line-opacity": 0.9 },
-    });
+   addLayer("route-layer", {
+  type: "line",
+  source: "route",
+  layout: {
+    "line-cap": "round",
+    "line-join": "round",
+  },
+  paint: {
+    "line-color": "#00ffff",
+    "line-width": 5,
+    "line-opacity": 0.9,
+    "line-dasharray": [2, 3], // 👈 gives dashed look
+    "line-blur": 1.2, // smooth glow
+  },
+});
+
 
     addSrc("tail", {
       type: "geojson",

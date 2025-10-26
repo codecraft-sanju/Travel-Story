@@ -19,6 +19,7 @@
     "@turf/turf": "^7.2.0",
     "axios": "^1.12.2",
     "dom-to-image-more": "^3.7.1",
+    "framer-motion": "^12.23.24",
     "gsap": "^3.13.0",
     "heroicons": "^2.2.0",
     "html2canvas": "^1.4.1",
