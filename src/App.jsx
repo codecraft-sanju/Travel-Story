@@ -1,560 +1,481 @@
 import React, {
   useRef,
   useState,
-  useEffect,
-  useMemo,
   useCallback,
+  useEffect,
+  memo,
 } from "react";
+import Map, { Source, Layer } from "react-map-gl";
 import axios from "axios";
 import { gsap } from "gsap";
 import * as turf from "@turf/turf";
-import debounce from "lodash.debounce";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  FaPlane,
+  FaRoute,
+  FaPlay,
+  FaStop,
+  FaMapMarkerAlt,
+  FaChevronUp,
+  FaCircleNotch,
+} from "react-icons/fa";
 
-// 🧩 components
-import Btn from "./components/Btn";
-import InputsPanel from "./components/InputsPanel";
-import MobileSheet from "./components/MobileSheet";
-import MapView from "./components/MapView";
-import { isMobileFn, getZoom, getPitch } from "./utils/helpers";
-import { fcPoint, emptyFC, fcVehicle } from "./utils/mapUtils";
+import "mapbox-gl/dist/mapbox-gl.css";
 
-// 🧱 constants
+// ==========================================
+// 1. CONFIG & ASSETS
+// ==========================================
+
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN;
-const PLANE_ICON = "plane-icon";
-const PLANE_ICON_SIZE = 0.16;
-const PLANE_ICON_URL = "/plane.png";
+const PLANE_ICON_ID = "plane-icon";
+// High Quality Plane Icon
+const PLANE_URL = "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c5/Airplane_silhouette.svg/2048px-Airplane_silhouette.svg.png"; 
+
+// ==========================================
+// 2. MODERN UI COMPONENTS
+// ==========================================
+
+// --- Glassmorphic Button ---
+const Btn = ({ onClick, children, variant = "primary", disabled = false, className = "" }) => {
+  const base = "relative overflow-hidden flex items-center justify-center gap-2 px-6 py-3.5 rounded-2xl font-bold text-sm transition-all active:scale-95 disabled:opacity-50 disabled:active:scale-100 shadow-lg backdrop-blur-md";
+  
+  const variants = {
+    primary: "bg-blue-600 text-white shadow-blue-500/40 hover:bg-blue-500",
+    secondary: "bg-white/80 text-gray-800 border border-white/50 hover:bg-white",
+    danger: "bg-red-500 text-white shadow-red-500/40",
+  };
+
+  return (
+    <button onClick={onClick} disabled={disabled} className={`${base} ${variants[variant]} ${className}`}>
+      {children}
+    </button>
+  );
+};
+
+// --- Tech Loader Overlay ---
+const TechLoader = ({ text }) => (
+  <motion.div 
+    initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+    className="absolute inset-0 z-[100] bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center text-white"
+  >
+    <div className="relative w-20 h-20 flex items-center justify-center mb-4">
+      {/* Radar Effect rings */}
+      <span className="absolute inset-0 border-4 border-blue-500/30 rounded-full animate-ping" />
+      <span className="absolute inset-0 border-4 border-t-blue-500 rounded-full animate-spin" />
+      <FaPlane className="text-2xl text-white rotate-45" />
+    </div>
+    <h3 className="text-lg font-bold tracking-wider animate-pulse">{text}</h3>
+    <p className="text-xs text-gray-400 mt-2">Optimizing Flight Path...</p>
+  </motion.div>
+);
+
+// --- Input Field (Modified to accept className for z-index control) ---
+const LocationInput = ({ value, setValue, suggestions, setSuggestions, onSelect, placeholder, fetchSuggestions, className = "" }) => {
+  const inputRef = useRef(null);
+  const debounce = useRef(null);
+
+  const handleChange = (e) => {
+    const val = e.target.value;
+    setValue(val);
+    if (debounce.current) clearTimeout(debounce.current);
+    debounce.current = setTimeout(() => fetchSuggestions(val, setSuggestions), 300);
+  };
+
+  return (
+    // FIX: Using dynamic className to control stacking order
+    <div className={`mb-4 relative ${className}`}>
+      <div className="absolute left-4 top-1/2 -translate-y-1/2 text-blue-500 z-10">
+        <FaMapMarkerAlt />
+      </div>
+      <input
+        ref={inputRef}
+        type="text"
+        value={value}
+        onChange={handleChange}
+        placeholder={placeholder}
+        className="w-full bg-gray-50 border border-gray-200 rounded-2xl pl-11 pr-4 py-4 focus:ring-2 focus:ring-blue-500 outline-none font-semibold text-gray-700 shadow-inner"
+        onFocus={() => setTimeout(() => inputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 300)}
+      />
+      
+      <AnimatePresence>
+        {suggestions.length > 0 && (
+          <motion.ul 
+            initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+            className="absolute top-full left-0 w-full mt-2 bg-white rounded-2xl shadow-2xl border border-gray-100 max-h-56 overflow-y-auto z-[60]"
+          >
+            {suggestions.map((s) => (
+              <li 
+                key={s.id} 
+                onClick={() => { onSelect(s); setSuggestions([]); }}
+                className="px-5 py-3 border-b last:border-0 border-gray-100 hover:bg-blue-50 active:bg-blue-100 cursor-pointer text-sm font-medium text-gray-600 truncate"
+              >
+                {s.place_name}
+              </li>
+            ))}
+          </motion.ul>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+};
+
+// ==========================================
+// 3. MAIN APP
+// ==========================================
 
 export default function App() {
-  // =============================
-  // 🧠 States
-  // =============================
+  // --- State ---
+  const [viewState, setViewState] = useState({ longitude: 78.9629, latitude: 20.5937, zoom: 3 });
+  const [loadingState, setLoadingState] = useState(null); // 'routing' | 'preparing' | null
+  const [isDrawerOpen, setIsDrawerOpen] = useState(true);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [videoUrl, setVideoUrl] = useState(null);
+
+  // Inputs
   const [fromCity, setFromCity] = useState("");
   const [toCity, setToCity] = useState("");
   const [fromSug, setFromSug] = useState([]);
   const [toSug, setToSug] = useState([]);
-  const [progress, setProgress] = useState(0);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [videoUrl, setVideoUrl] = useState(null);
-  const [isLoadingRoute, setIsLoadingRoute] = useState(false);
 
-  const [fps, setFps] = useState(60);
-  const [bitrate, setBitrate] = useState(5_000_000);
-  const [zoomMobileOverride, setZoomMobileOverride] = useState(7);
-  const [zoomDesktopOverride, setZoomDesktopOverride] = useState(4.6);
-
-  const [isMobile, setIsMobile] = useState(isMobileFn());
-  const [sheetOpen, setSheetOpen] = useState(true);
-  const [keyboardOpen, setKeyboardOpen] = useState(false);
-
-  // =============================
-  // 🪄 Refs
-  // =============================
+  // Refs
   const mapRef = useRef(null);
-  const recordWrapRef = useRef(null);
-  const mediaRecorderRef = useRef(null);
+  const fromCoord = useRef(null);
+  const toCoord = useRef(null);
+  const routePath = useRef([]);
+  const animTimeline = useRef(null);
+  const recorderRef = useRef(null);
   const chunksRef = useRef([]);
-  const routeRef = useRef([]);
-  const animObj = useRef({ i: 0 });
-  const debounceRef = useRef({ from: null, to: null });
-  const tlRef = useRef(null);
-  const fromRef = useRef(null);
-  const toRef = useRef(null);
 
-  // =============================
-  // 🌍 Fetch Suggestions (Debounced)
-  // =============================
-  const fetchSuggestions = useCallback(async (query, setList) => {
-    if (!query?.trim()) return setList([]);
+  // --- API ---
+  const fetchSuggestions = async (query, setList) => {
+    if (!query) return setList([]);
     try {
-      const res = await axios.get(
-        `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(
-          query
-        )}.json`,
-        { params: { access_token: MAPBOX_TOKEN, autocomplete: true, limit: 6 } }
-      );
+      const res = await axios.get(`https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json`, {
+        params: { access_token: MAPBOX_TOKEN, autocomplete: true, limit: 3 }
+      });
       setList(res.data.features || []);
-    } catch (err) {
-      console.error(err);
-      setList([]);
-    }
-  }, []);
+    } catch (e) { console.error(e); }
+  };
 
-  const debouncedFetch = useMemo(
-    () => debounce(fetchSuggestions, 400),
-    [fetchSuggestions]
-  );
-
-  // =============================
-  // 🗺️ Place Selection + Swap
-  // =============================
-  const selectPlace = useCallback((p, type) => {
-    const map = mapRef.current?.getMap?.();
-    if (!p?.center || !map) return;
-    const coords = p.center;
+  const handleSelect = (feat, type) => {
+    const coords = feat.center;
     if (type === "from") {
-      fromRef.current = coords;
-      setFromCity(p.place_name);
-      setFromSug([]);
-      map.getSource("from-point")?.setData(fcPoint(coords));
+      fromCoord.current = coords;
+      setFromCity(feat.place_name.split(",")[0]);
+      mapRef.current?.getSource("from-point")?.setData({ type: "Feature", geometry: { type: "Point", coordinates: coords } });
     } else {
-      toRef.current = coords;
-      setToCity(p.place_name);
-      setToSug([]);
-      map.getSource("to-point")?.setData(fcPoint(coords));
+      toCoord.current = coords;
+      setToCity(feat.place_name.split(",")[0]);
+      mapRef.current?.getSource("to-point")?.setData({ type: "Feature", geometry: { type: "Point", coordinates: coords } });
     }
-    map.flyTo({ center: coords, zoom: 5, duration: 800 });
-  }, []);
+    
+    // Quick fly to show selection
+    mapRef.current?.flyTo({ center: coords, zoom: 4 });
+  };
 
-  const swap = useCallback(() => {
-    const map = mapRef.current?.getMap?.();
-    [fromRef.current, toRef.current] = [toRef.current, fromRef.current];
-    setFromCity((prev) => {
-      const oldFrom = prev;
-      setToCity(oldFrom);
-      return toCity;
-    });
-    if (map) {
-      map.getSource("from-point")?.setData(fromRef.current ? fcPoint(fromRef.current) : emptyFC());
-      map.getSource("to-point")?.setData(toRef.current ? fcPoint(toRef.current) : emptyFC());
+  // --- LOGIC: Route Generation ---
+  const generateRoute = async () => {
+    if (!fromCoord.current || !toCoord.current) return alert("Please select both locations");
+    
+    setLoadingState("routing");
+    setIsDrawerOpen(false);
+
+    // Artificial delay to show loader (feels more "pro")
+    await new Promise(r => setTimeout(r, 800));
+
+    const start = fromCoord.current;
+    const end = toCoord.current;
+
+    // 1. Calculate Bezier Curve
+    const greatCircle = turf.greatCircle(start, end, { npoints: 100 });
+    const curved = turf.bezierSpline(greatCircle, { resolution: 10000, sharpness: 0.6 }); // Sharpness adjustment
+    const distance = turf.length(curved, { units: "kilometers" });
+    
+    // 2. Create high-res path for smoothness
+    const steps = Math.ceil(distance / 2); // 1 point every 2km
+    const path = [];
+    for(let i=0; i<steps; i++) {
+      path.push(turf.along(curved, (i * distance)/steps, { units: "kilometers" }).geometry.coordinates);
     }
-  }, [toCity]);
+    routePath.current = path;
 
-  // =============================
-  // 🧭 Route Generation
-  // =============================
-  const generateRoute = useCallback(() => {
-    const from = fromRef.current;
-    const to = toRef.current;
-    const map = mapRef.current?.getMap?.();
-    if (!from || !to || !map) return alert("Pick both places first.");
-
-    setIsLoadingRoute(true);
-    setTimeout(() => setIsLoadingRoute(false), 1200);
-
-    const great = turf.greatCircle(from, to, { npoints: 200 });
-    const smooth = turf.bezierSpline(great, { resolution: 10_000, sharpness: 0.85 });
-
-    const totalKm = turf.length(smooth, { units: "kilometers" });
-    const steps = Math.max(20, Math.floor(totalKm / 5));
-    const coords = [];
-    for (let i = 0; i <= steps; i++) {
-      const d = (totalKm * i) / steps;
-      const pt = turf.along(smooth, d, { units: "kilometers" });
-      coords.push(pt.geometry.coordinates);
-    }
-    routeRef.current = coords;
-
-    map.getSource("route")?.setData({
+    // 3. Update Map Layers
+    const map = mapRef.current?.getMap();
+    map?.getSource("route-line")?.setData({ type: "Feature", geometry: { type: "LineString", coordinates: path } });
+    
+    // 4. Place Plane at Start IMMEDIATELY
+    const initialBearing = turf.bearing(turf.point(path[0]), turf.point(path[1]));
+    map?.getSource("plane-point")?.setData({
       type: "Feature",
-      geometry: { type: "LineString", coordinates: coords },
+      geometry: { type: "Point", coordinates: path[0] },
+      properties: { rotate: initialBearing }
     });
 
-    // === 📍 Add route label text
-    const centerLon = (from[0] + to[0]) / 2;
-    const maxLat = Math.max(from[1], to[1]);
-    const labelPoint = [centerLon, maxLat + 5];
-    const labelText = `📍 ${fromCity.split(",")[0]} → ${toCity.split(",")[0]}`;
+    // 5. Fit Bounds
+    const bounds = new mapboxgl.LngLatBounds(start, end);
+    map?.fitBounds(bounds, { padding: 100, duration: 1500 });
 
-    if (map.getLayer("route-label")) map.removeLayer("route-label");
-    if (map.getSource("route-label")) map.removeSource("route-label");
+    setLoadingState(null);
+    setTimeout(() => setIsDrawerOpen(true), 500);
+  };
 
-    map.addSource("route-label", {
-      type: "geojson",
-      data: {
-        type: "FeatureCollection",
-        features: [
-          {
-            type: "Feature",
-            geometry: { type: "Point", coordinates: labelPoint },
-            properties: { title: labelText },
-          },
-        ],
-      },
-    });
+  // --- LOGIC: Flight Animation ---
+  const startFlight = async () => {
+    if (routePath.current.length === 0) return generateRoute();
 
-    map.addLayer({
-      id: "route-label",
-      type: "symbol",
-      source: "route-label",
-      layout: {
-        "text-field": ["get", "title"],
-        "text-size": isMobile ? 17 : 22,
-        "text-anchor": "top",
-        "text-offset": [0, 0.5],
-        "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
-      },
-      paint: {
-        "text-color": "#ffffff",
-        "text-halo-color": "#000000",
-        "text-halo-width": 2.5,
-      },
-    });
+    setLoadingState("preparing"); // Show loader while we setup video
+    setIsDrawerOpen(false);
 
-    gsap.fromTo(
-      map.getCanvas(),
-      { opacity: 0.8 },
-      { opacity: 1, duration: 0.6, ease: "power2.out" }
-    );
+    const map = mapRef.current?.getMap();
+    const path = routePath.current;
 
-    const padding = isMobile ? 70 : 140;
-    const bounds = [
-      [Math.min(from[0], to[0]), Math.min(from[1], to[1])],
-      [Math.max(from[0], to[0]), Math.max(from[1], to[1])],
-    ];
-    map.fitBounds(bounds, { padding, duration: 1200 });
-  }, [fromCity, toCity, isMobile]);
-
-  // =============================
-  // 🎥 Recording Logic
-  // =============================
-  const startRecording = useCallback(async () => {
-    const canvas = recordWrapRef.current?.querySelector("canvas");
-    if (!canvas) return alert("Canvas not found");
-
-    const targetFps = isMobile ? Math.min(30, fps) : fps;
-    const targetBitrate = isMobile ? Math.min(3_000_000, bitrate) : bitrate;
-
-    const stream = canvas.captureStream(targetFps);
-    const tryTypes = [
-      "video/webm;codecs=vp9",
-      "video/webm;codecs=vp8",
-      "video/webm",
-      "video/mp4",
-    ];
-    let mimeType = "";
-    for (const t of tryTypes) {
-      if (MediaRecorder.isTypeSupported?.(t)) {
-        mimeType = t;
-        break;
-      }
-    }
-
-    const rec = new MediaRecorder(stream, {
-      mimeType: mimeType || undefined,
-      videoBitsPerSecond: targetBitrate,
-    });
-
+    // 1. Setup Recorder
+    const canvas = document.querySelector(".mapboxgl-canvas");
+    const stream = canvas.captureStream(30); // 30fps is stable for mobile
+    const rec = new MediaRecorder(stream, { mimeType: "video/webm" });
     chunksRef.current = [];
-    rec.ondataavailable = (e) => e.data.size && chunksRef.current.push(e.data);
+    rec.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data); };
     rec.onstop = () => {
-      const type = mimeType?.includes("webm") ? "video/webm" : "video/mp4";
-      const blob = new Blob(chunksRef.current, { type });
-      const url = URL.createObjectURL(blob);
-      setVideoUrl((prev) => {
-        if (prev) URL.revokeObjectURL(prev);
-        return url;
-      });
-      document.body.style.overflow = "auto";
+       const blob = new Blob(chunksRef.current, { type: "video/webm" });
+       setVideoUrl(URL.createObjectURL(blob));
     };
+    recorderRef.current = rec;
 
-    document.body.style.overflow = "hidden";
-    mediaRecorderRef.current = rec;
-    rec.start(100);
-  }, [fps, bitrate, isMobile]);
+    // 2. Reset Camera to Start Position (Instant)
+    const initialBearing = turf.bearing(turf.point(path[0]), turf.point(path[1]));
+    map.jumpTo({ center: path[0], zoom: 5, pitch: 60, bearing: initialBearing });
 
-  const stopRecording = useCallback(async () => {
-    const rec = mediaRecorderRef.current;
-    if (rec && rec.state === "recording") {
-      await new Promise((resolve) => {
-        const prev = rec.onstop;
-        rec.onstop = () => {
-          prev?.();
-          resolve();
-        };
-        rec.stop();
-      });
-    }
-  }, []);
+    // 3. Buffer Delay (Wait for map tiles to load at start)
+    await new Promise(r => setTimeout(r, 1500)); 
 
-  // =============================
-  // ✈️ Journey Animation
-  // =============================
-  const startJourney = useCallback(async () => {
-    const coords = routeRef.current;
-    const map = mapRef.current?.getMap?.();
-    if (!coords?.length || !map) return alert("Make the route first.");
-
-    tlRef.current?.kill?.();
+    // 4. GO!
+    setLoadingState(null);
     setIsPlaying(true);
-    setProgress(0);
+    rec.start();
 
-    if (isMobile) {
-      setSheetOpen(false);
-      gsap.to(".bottom-sheet", { y: "100%", opacity: 0, duration: 0.45, ease: "power2.out" });
-    }
-
-    await startRecording();
-
-    const totalKm = turf.length(
-      { type: "Feature", geometry: { type: "LineString", coordinates: coords } },
-      { units: "kilometers" }
-    );
-    const duration = Math.min(18, Math.max(8, totalKm / 180));
-
-    animObj.current.i = 0;
-
-    const tl = gsap.to(animObj.current, {
-      i: coords.length - 1,
-      duration,
-      ease: "power2.inOut",
+    // 5. GSAP Animation
+    const obj = { index: 0 };
+    animTimeline.current = gsap.to(obj, {
+      index: path.length - 1,
+      duration: 14, // Slower flight for grandeur
+      ease: "none",
       onUpdate: () => {
-        const i = Math.floor(animObj.current.i);
-        const pos = coords[i];
-        const next = coords[i + 1] || pos;
-        const bearing = turf.bearing(turf.point(pos), turf.point(next));
-        const tail = coords.slice(Math.max(0, i - 18), i + 1);
+        const i = Math.floor(obj.index);
+        const curr = path[i];
+        const next = path[i+1] || curr;
+        const bearing = turf.bearing(turf.point(curr), turf.point(next));
 
-        map.getSource("tail")?.setData({
+        // Update Plane
+        map.getSource("plane-point").setData({
           type: "Feature",
-          geometry: { type: "LineString", coordinates: tail },
+          geometry: { type: "Point", coordinates: curr },
+          properties: { rotate: bearing }
         });
-        map.getSource("vehicle-point")?.setData(
-          fcVehicle(pos, bearing, PLANE_ICON, PLANE_ICON_SIZE)
-        );
 
-        const zoom =
-          isMobile ? (zoomMobileOverride || getZoom()) : (zoomDesktopOverride || getZoom());
+        // Update Tail
+        const tail = path.slice(Math.max(0, i - 50), i + 1);
+        map.getSource("tail-line").setData({ type: "Feature", geometry: { type: "LineString", coordinates: tail } });
 
+        // Update Camera
         map.easeTo({
-          center: pos,
-          bearing,
-          pitch: getPitch(),
-          zoom,
-          duration: 180,
+          center: curr,
+          bearing: bearing,
+          pitch: 60,
+          zoom: 5.5, // Slightly zoomed in
+          duration: 0 // Instant follow
         });
-
-        setProgress(Math.round((i / (coords.length - 1)) * 100));
       },
-      onComplete: async () => {
-        const lastPos = coords[coords.length - 1];
-        map.easeTo({
-          center: lastPos,
-          zoom: (isMobile ? zoomMobileOverride : zoomDesktopOverride) + 0.8,
-          pitch: 28,
-          bearing: 0,
-          duration: 1800,
-        });
-        setTimeout(async () => {
-          await stopRecording();
-          setIsPlaying(false);
-          if (isMobile) {
-            setSheetOpen(true);
-            gsap.to(".bottom-sheet", { y: "0%", opacity: 1, duration: 0.45, ease: "power2.out" });
-          }
-        }, 1500);
-      },
-    });
-
-    tlRef.current = tl;
-  }, [isMobile, startRecording, stopRecording, zoomMobileOverride, zoomDesktopOverride]);
-
-  const stopJourneyNow = useCallback(async () => {
-    tlRef.current?.kill?.();
-    setIsPlaying(false);
-    await stopRecording();
-    if (isMobile) {
-      setSheetOpen(true);
-      gsap.to(".bottom-sheet", { y: "0%", opacity: 1, duration: 0.45, ease: "power2.out" });
-    }
-  }, [isMobile, stopRecording]);
-
-  // =============================
-  // 🧱 Map Setup
-  // =============================
-  const ensurePlaneIcon = (map) => {
-    if (map.hasImage(PLANE_ICON)) return;
-    map.loadImage(PLANE_ICON_URL, (err, img) => {
-      if (!err && img && !map.hasImage(PLANE_ICON)) {
-        map.addImage(PLANE_ICON, img, { pixelRatio: 2 });
+      onComplete: () => {
+        rec.stop();
+        setIsPlaying(false);
+        setIsDrawerOpen(true);
+        map.easeTo({ pitch: 0, zoom: 3, duration: 2000 });
       }
     });
   };
 
-  const setupLayers = (map) => {
-    const addSrc = (id, data) => !map.getSource(id) && map.addSource(id, data);
-    const addLayer = (id, cfg) => !map.getLayer(id) && map.addLayer({ id, ...cfg });
+  const stopFlight = () => {
+    animTimeline.current?.kill();
+    recorderRef.current?.stop();
+    setIsPlaying(false);
+    setIsDrawerOpen(true);
+    setLoadingState(null);
+  };
 
-    addSrc("from-point", { type: "geojson", data: emptyFC() });
-    addLayer("from-layer", {
-      type: "circle",
-      source: "from-point",
-      paint: { "circle-radius": 8, "circle-color": "#22c55e" },
+  // --- Map Load ---
+  const onMapLoad = (e) => {
+    const map = e.target;
+    
+    // Load Icon immediately
+    if(!map.hasImage(PLANE_ICON_ID)) {
+      map.loadImage(PLANE_URL, (err, img) => {
+        if(!err) map.addImage(PLANE_ICON_ID, img);
+      });
+    }
+
+    // Sources
+    const empty = { type: "FeatureCollection", features: [] };
+    map.addSource("route-line", { type: "geojson", data: empty });
+    map.addSource("tail-line", { type: "geojson", data: empty });
+    map.addSource("from-point", { type: "geojson", data: empty });
+    map.addSource("to-point", { type: "geojson", data: empty });
+    map.addSource("plane-point", { type: "geojson", data: empty });
+
+    // Layers
+    // 1. Dashed Route
+    map.addLayer({
+      id: "route-layer", type: "line", source: "route-line",
+      paint: { "line-color": "#ffffff", "line-width": 2, "line-opacity": 0.5, "line-dasharray": [2, 4] }
     });
 
-    addSrc("to-point", { type: "geojson", data: emptyFC() });
-    addLayer("to-layer", {
-      type: "circle",
-      source: "to-point",
-      paint: { "circle-radius": 8, "circle-color": "#3b82f6" },
+    // 2. Gold Tail
+    map.addLayer({
+      id: "tail-layer", type: "line", source: "tail-line",
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": "#fbbf24", "line-width": 4, "line-blur": 1 }
     });
 
-    addSrc("route", {
-      type: "geojson",
-      data: { type: "Feature", geometry: { type: "LineString", coordinates: [] } },
-    });
-   addLayer("route-layer", {
-  type: "line",
-  source: "route",
-  layout: {
-    "line-cap": "round",
-    "line-join": "round",
-  },
-  paint: {
-    "line-color": "#00ffff",
-    "line-width": 5,
-    "line-opacity": 0.9,
-    "line-dasharray": [2, 3], // 👈 gives dashed look
-    "line-blur": 1.2, // smooth glow
-  },
-});
+    // 3. Markers
+    map.addLayer({ id: "from-l", type: "circle", source: "from-point", paint: { "circle-radius": 8, "circle-color": "#10b981", "circle-stroke-width": 2, "circle-stroke-color": "#fff" } });
+    map.addLayer({ id: "to-l", type: "circle", source: "to-point", paint: { "circle-radius": 8, "circle-color": "#ef4444", "circle-stroke-width": 2, "circle-stroke-color": "#fff" } });
 
-
-    addSrc("tail", {
-      type: "geojson",
-      data: { type: "Feature", geometry: { type: "LineString", coordinates: [] } },
-    });
-    addLayer("tail-layer", {
-      type: "line",
-      source: "tail",
-      paint: { "line-color": "#ffd369", "line-width": 7, "line-opacity": 0.6 },
-    });
-
-    addSrc("vehicle-point", {
-      type: "geojson",
-      data: fcVehicle([0, 0], 0, PLANE_ICON, PLANE_ICON_SIZE),
-    });
-    addLayer("vehicle-layer", {
-      type: "symbol",
-      source: "vehicle-point",
+    // 4. PLANE (Dynamic Size)
+    map.addLayer({
+      id: "plane-layer", type: "symbol", source: "plane-point",
       layout: {
-        "icon-image": ["get", "icon"],
-        "icon-size": ["get", "size"],
-        "icon-rotate": ["get", "rotation"],
+        "icon-image": PLANE_ICON_ID,
+        "icon-rotate": ["get", "rotate"],
         "icon-rotation-alignment": "map",
         "icon-allow-overlap": true,
-      },
+        "icon-ignore-placement": true,
+        // DYNAMIC ICON SIZE: Zoom 0 -> 0.2 size, Zoom 10 -> 0.8 size
+        "icon-size": [
+          "interpolate", ["linear"], ["zoom"],
+          0, 0.2,
+          5, 0.5,
+          10, 0.8
+        ]
+      }
     });
   };
 
-  const handleMapLoad = (e) => {
-    const map = e.target;
-    ensurePlaneIcon(map);
-    setupLayers(map);
-  };
-
-  // =============================
-  // 📱 Responsive
-  // =============================
-  useEffect(() => {
-    const onResize = () => setIsMobile(isMobileFn());
-    window.addEventListener("resize", onResize);
-    const vv = window.visualViewport;
-    let baseH = vv ? vv.height : window.innerHeight;
-    const onVV = () => {
-      if (!vv) return;
-      const keyboardLikelyOpen = baseH - vv.height > 120;
-      setKeyboardOpen(keyboardLikelyOpen);
-    };
-    vv?.addEventListener("resize", onVV);
-
-    return () => {
-      window.removeEventListener("resize", onResize);
-      vv?.removeEventListener("resize", onVV);
-    };
-  }, [isMobile]);
-
-  useEffect(() => {
-    return () => {
-      tlRef.current?.kill?.();
-      mediaRecorderRef.current?.stop?.();
-      document.body.style.overflow = "auto";
-      if (videoUrl) URL.revokeObjectURL(videoUrl);
-    };
-  }, [videoUrl]);
-
-  // =============================
-  // 🧩 Render
-  // =============================
   return (
-    <div className="relative w-full h-screen bg-black text-sm overflow-hidden">
-      {isLoadingRoute && (
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-black/60 text-white px-3 py-2 rounded-xl text-xs animate-pulse z-50">
-          Generating Route...
-        </div>
+    <div className="relative w-full h-[100dvh] bg-gray-900 overflow-hidden text-gray-800 font-sans">
+      
+      {/* LOADERS */}
+      <AnimatePresence>
+        {loadingState === "routing" && <TechLoader key="l1" text="Calculating Trajectory..." />}
+        {loadingState === "preparing" && <TechLoader key="l2" text="Initializing Systems..." />}
+      </AnimatePresence>
+
+      {/* MAP */}
+      <Map
+        ref={mapRef}
+        mapboxAccessToken={MAPBOX_TOKEN}
+        initialViewState={viewState}
+        onMove={e => setViewState(e.viewState)}
+        style={{ width: "100%", height: "100%" }}
+        mapStyle="mapbox://styles/mapbox/satellite-streets-v12"
+        onLoad={onMapLoad}
+        attributionControl={false}
+      />
+
+      {/* STOP BUTTON */}
+      {isPlaying && (
+        <motion.div 
+          initial={{ y: 100 }} animate={{ y: 0 }}
+          className="absolute bottom-10 left-0 right-0 flex justify-center z-50"
+        >
+          <Btn variant="danger" onClick={stopFlight} className="shadow-red-500/50 rounded-full px-8">
+            <FaStop /> Abort Flight
+          </Btn>
+        </motion.div>
       )}
 
-      <InputsPanel
-        {...{
-          fromCity,
-          setFromCity,
-          toCity,
-          setToCity,
-          fromSug,
-          toSug,
-          selectPlace,
-          swap,
-          fetchSuggestions: debouncedFetch,
-          generateRoute,
-          startJourney,
-          stopJourneyNow,
-          isPlaying,
-          progress,
-          fps,
-          setFps,
-          bitrate,
-          setBitrate,
-          zoomMobileOverride,
-          setZoomMobileOverride,
-          zoomDesktopOverride,
-          setZoomDesktopOverride,
-          videoUrl,
-          setVideoUrl,
-          debounceRef,
-        }}
-      />
+      {/* VIDEO DOWNLOAD MODAL */}
+      <AnimatePresence>
+        {videoUrl && (
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }}
+            className="absolute inset-0 z-[70] bg-black/80 backdrop-blur flex items-center justify-center p-6"
+          >
+            <div className="bg-white w-full max-w-sm rounded-3xl p-5 shadow-2xl">
+              <h3 className="text-xl font-bold mb-4 text-center">Flight Recorded 🎬</h3>
+              <video src={videoUrl} controls className="w-full rounded-xl mb-4 bg-black" />
+              <div className="grid grid-cols-2 gap-3">
+                <a href={videoUrl} download="flight-journey.webm" className="flex items-center justify-center gap-2 bg-green-500 text-white font-bold py-3 rounded-xl shadow-lg shadow-green-500/30">
+                  Save Video
+                </a>
+                <button onClick={() => setVideoUrl(null)} className="font-bold text-gray-500 hover:bg-gray-100 rounded-xl">
+                  Close
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-      <MobileSheet
-        {...{
-          sheetOpen,
-          setSheetOpen,
-          fromCity,
-          setFromCity,
-          toCity,
-          setToCity,
-          fromSug,
-          setFromSug,
-          toSug,
-          setToSug,
-          selectPlace,
-          swap,
-          fetchSuggestions: debouncedFetch,
-          generateRoute,
-          startJourney,
-          stopJourneyNow,
-          isPlaying,
-          progress,
-          fps,
-          setFps,
-          bitrate,
-          setBitrate,
-          zoomMobileOverride,
-          setZoomMobileOverride,
-          zoomDesktopOverride,
-          setZoomDesktopOverride,
-          videoUrl,
-          setVideoUrl,
-          debounceRef,
-        }}
-      />
+      {/* DRAWER TOGGLE */}
+      {!isDrawerOpen && !loadingState && !isPlaying && (
+         <button onClick={() => setIsDrawerOpen(true)} className="absolute bottom-6 right-6 bg-blue-600 text-white p-4 rounded-full shadow-xl z-40 animate-bounce">
+           <FaChevronUp />
+         </button>
+      )}
 
-      <MapView
-        mapRef={mapRef}
-        onLoad={handleMapLoad}
-        MAPBOX_TOKEN={MAPBOX_TOKEN}
-        recordWrapRef={recordWrapRef}
-        fromCity={fromCity}
-        toCity={toCity}
-      />
+      {/* DRAWER UI */}
+      <AnimatePresence>
+        {isDrawerOpen && (
+          <>
+            <motion.div 
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              onClick={() => setIsDrawerOpen(false)} className="absolute inset-0 bg-black/20 backdrop-blur-[1px] z-30"
+            />
+            <motion.div
+              initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
+              transition={{ type: "spring", damping: 25, stiffness: 300 }}
+              className="absolute bottom-0 left-0 right-0 bg-white rounded-t-[2.5rem] p-6 pb-8 z-40 shadow-[0_-10px_60px_rgba(0,0,0,0.4)]"
+            >
+              <div className="w-12 h-1.5 bg-gray-200 rounded-full mx-auto mb-6" onClick={() => setIsDrawerOpen(false)}/>
+              
+              <h2 className="text-2xl font-black text-gray-800 mb-6 flex items-center gap-2">
+                <FaPlane className="text-blue-600 rotate-[-45deg]" /> Flight Plan
+              </h2>
+
+              {/* FIX: Gave 'From' input higher z-index (z-50) so dropdown shows ON TOP of 'To' input */}
+              <LocationInput 
+                className="z-50"
+                placeholder="Origin Airport / City"
+                value={fromCity} setValue={setFromCity}
+                suggestions={fromSug} setSuggestions={setFromSug}
+                fetchSuggestions={fetchSuggestions} onSelect={p => handleSelect(p, "from")}
+              />
+
+              <div className="flex justify-center -my-3 relative z-10">
+                 <div className="bg-gray-100 p-2 rounded-full border-4 border-white text-gray-400">
+                    <FaRoute className="rotate-90" />
+                 </div>
+              </div>
+
+              {/* FIX: Gave 'To' input lower z-index (z-40) */}
+              <LocationInput 
+                className="z-40"
+                placeholder="Destination Airport / City"
+                value={toCity} setValue={setToCity}
+                suggestions={toSug} setSuggestions={setToSug}
+                fetchSuggestions={fetchSuggestions} onSelect={p => handleSelect(p, "to")}
+              />
+
+              <div className="grid grid-cols-2 gap-4 mt-6 relative z-30">
+                <Btn variant="secondary" onClick={generateRoute}>Preview Path</Btn>
+                <Btn onClick={startFlight} disabled={!routePath.current.length}>
+                  <FaPlay /> Take Off
+                </Btn>
+              </div>
+
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
