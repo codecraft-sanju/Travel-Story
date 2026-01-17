@@ -18,7 +18,7 @@ import {
   FaMapMarkerAlt,
   FaChevronUp,
   FaTimes,
-  FaCircleNotch, // Loader Icon
+  FaCircleNotch,
 } from "react-icons/fa";
 
 import "mapbox-gl/dist/mapbox-gl.css";
@@ -35,16 +35,13 @@ const PLANE_URL = "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c5/Air
 // 2. UI COMPONENTS
 // ==========================================
 
-// --- Action Button ---
 const Btn = ({ onClick, children, variant = "primary", disabled = false, className = "" }) => {
   const base = "relative overflow-hidden flex items-center justify-center gap-2 px-6 py-3.5 rounded-2xl font-bold text-sm transition-all active:scale-95 disabled:opacity-60 disabled:active:scale-100 shadow-md backdrop-blur-md";
-  
   const variants = {
     primary: "bg-blue-600 text-white shadow-blue-500/30 hover:bg-blue-500",
     secondary: "bg-gray-100 text-gray-800 border border-gray-200 hover:bg-white",
     danger: "bg-red-500 text-white shadow-red-500/30",
   };
-
   return (
     <button onClick={onClick} disabled={disabled} className={`${base} ${variants[variant]} ${className}`}>
       {children}
@@ -52,7 +49,6 @@ const Btn = ({ onClick, children, variant = "primary", disabled = false, classNa
   );
 };
 
-// --- Full Screen Tech Loader ---
 const TechLoader = ({ text }) => (
   <motion.div 
     initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
@@ -65,42 +61,29 @@ const TechLoader = ({ text }) => (
   </motion.div>
 );
 
-// --- Optimized Input with Search Loader ---
 const LocationInput = ({ 
-  value, 
-  setValue, 
-  suggestions, 
-  setSuggestions, 
-  onSelect, 
-  placeholder, 
-  fetchSuggestions, 
-  className = "",
-  zIndex = 50 
+  value, setValue, suggestions, setSuggestions, onSelect, placeholder, fetchSuggestions, className = "", zIndex = 50 
 }) => {
   const inputRef = useRef(null);
   const debounce = useRef(null);
-  const [isLoading, setIsLoading] = useState(false); // Local loading state
+  const [isLoading, setIsLoading] = useState(false);
 
   const handleChange = (e) => {
     const val = e.target.value;
     setValue(val);
     
-    // Clear if empty
     if (!val.trim()) {
         setIsLoading(false);
         setSuggestions([]);
         return;
     }
 
-    // Show Loader Immediately
     setIsLoading(true);
-
     if (debounce.current) clearTimeout(debounce.current);
     
-    // Debounce API Call
     debounce.current = setTimeout(async () => {
         await fetchSuggestions(val, setSuggestions);
-        setIsLoading(false); // Hide Loader when data arrives
+        setIsLoading(false);
     }, 300); 
   };
 
@@ -126,7 +109,6 @@ const LocationInput = ({
         onFocus={() => setTimeout(() => inputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 300)}
       />
 
-      {/* Clear Button or Spinner */}
       <div className="absolute right-4 top-1/2 -translate-y-1/2 z-20">
         {isLoading ? (
             <FaCircleNotch className="animate-spin text-blue-500" />
@@ -137,14 +119,12 @@ const LocationInput = ({
         ) : null}
       </div>
       
-      {/* Suggestions Dropdown */}
       <AnimatePresence>
         {(suggestions.length > 0 || isLoading) && (
           <motion.ul 
             initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
             className="absolute top-[110%] left-0 w-full bg-white rounded-2xl shadow-xl border border-gray-100 max-h-60 overflow-y-auto z-[100] overflow-hidden"
           >
-            {/* Show specific loader inside dropdown if needed, or just list */}
             {isLoading && suggestions.length === 0 ? (
                  <li className="px-5 py-4 text-sm text-gray-500 flex items-center justify-center gap-2">
                     <FaCircleNotch className="animate-spin text-blue-500" /> Searching...
@@ -173,7 +153,6 @@ const LocationInput = ({
 // ==========================================
 
 export default function App() {
-  // --- State ---
   const [viewState, setViewState] = useState({ longitude: 78.9629, latitude: 20.5937, zoom: 3 });
   const [loadingState, setLoadingState] = useState(null); 
   const [isDrawerOpen, setIsDrawerOpen] = useState(true);
@@ -185,7 +164,6 @@ export default function App() {
   const [fromSug, setFromSug] = useState([]);
   const [toSug, setToSug] = useState([]);
 
-  // Refs
   const mapRef = useRef(null);
   const fromCoord = useRef(null);
   const toCoord = useRef(null);
@@ -194,7 +172,6 @@ export default function App() {
   const recorderRef = useRef(null);
   const chunksRef = useRef([]);
 
-  // --- API (Suggestions) ---
   const fetchSuggestions = async (query, setList) => {
     if (!query) return;
     try {
@@ -219,123 +196,128 @@ export default function App() {
     mapRef.current?.flyTo({ center: coords, zoom: 4, duration: 1000 });
   };
 
-  // --- LOGIC: Route ---
+  // --- SAFE GENERATE ROUTE ---
   const generateRoute = async () => {
     if (!fromCoord.current || !toCoord.current) return alert("Select Origin & Destination");
     
+    // 1. Show Loader
     setLoadingState("Processing...");
     setIsDrawerOpen(false);
 
-    // Fast Delay (300ms) - Just for UI transition
-    await new Promise(r => setTimeout(r, 300));
+    try {
+        const start = fromCoord.current;
+        const end = toCoord.current;
 
-    const start = fromCoord.current;
-    const end = toCoord.current;
+        // Check if Same Location
+        if(start[0] === end[0] && start[1] === end[1]) {
+            throw new Error("Start and End cannot be same");
+        }
 
-    // Bezier Curve
-    const greatCircle = turf.greatCircle(start, end, { npoints: 100 });
-    const curved = turf.bezierSpline(greatCircle, { resolution: 10000, sharpness: 0.6 });
-    const distance = turf.length(curved, { units: "kilometers" });
-    
-    // Path Points (Optimized count)
-    const steps = Math.ceil(distance / 4); // Less points = Faster performance
-    const path = [];
-    for(let i=0; i<=steps; i++) {
-      path.push(turf.along(curved, (i * distance)/steps, { units: "kilometers" }).geometry.coordinates);
-    }
-    routePath.current = path;
-
-    // Update Map
-    const map = mapRef.current?.getMap();
-    if(map) {
-        map.getSource("route-line")?.setData({ type: "Feature", geometry: { type: "LineString", coordinates: path } });
+        // 2. Math Calculations
+        const greatCircle = turf.greatCircle(start, end, { npoints: 100 });
+        const curved = turf.bezierSpline(greatCircle, { resolution: 10000, sharpness: 0.6 });
+        const distance = turf.length(curved, { units: "kilometers" });
         
-        const initialBearing = turf.bearing(turf.point(path[0]), turf.point(path[1]));
-        map.getSource("plane-point")?.setData({
-          type: "Feature",
-          geometry: { type: "Point", coordinates: path[0] },
-          properties: { rotate: initialBearing }
-        });
+        const steps = Math.ceil(distance / 5); // Optimization
+        const path = [];
+        for(let i=0; i<=steps; i++) {
+            path.push(turf.along(curved, (i * distance)/steps, { units: "kilometers" }).geometry.coordinates);
+        }
+        routePath.current = path;
 
-        const bounds = new mapboxgl.LngLatBounds(start, end);
-        map.fitBounds(bounds, { padding: 100, duration: 1200 });
+        // 3. Update Map
+        const map = mapRef.current?.getMap();
+        if(map) {
+            map.getSource("route-line")?.setData({ type: "Feature", geometry: { type: "LineString", coordinates: path } });
+            
+            const initialBearing = turf.bearing(turf.point(path[0]), turf.point(path[1]));
+            map.getSource("plane-point")?.setData({
+                type: "Feature",
+                geometry: { type: "Point", coordinates: path[0] },
+                properties: { rotate: initialBearing }
+            });
+
+            const bounds = new mapboxgl.LngLatBounds(start, end);
+            map.fitBounds(bounds, { padding: 100, duration: 1000 });
+        }
+
+    } catch (error) {
+        console.error("Route Error", error);
+        alert("Could not generate route. Please try slightly different locations.");
+    } finally {
+        // 4. ALWAYS HIDE LOADER
+        setLoadingState(null);
+        setTimeout(() => setIsDrawerOpen(true), 300);
     }
-
-    setLoadingState(null);
-    setTimeout(() => setIsDrawerOpen(true), 400);
   };
 
-  // --- LOGIC: Fly ---
+  // --- SAFE START FLIGHT ---
   const startFlight = async () => {
     if (routePath.current.length === 0) return generateRoute();
 
     setLoadingState("Readying..."); 
     setIsDrawerOpen(false);
 
-    const map = mapRef.current?.getMap();
-    const path = routePath.current;
+    try {
+        const map = mapRef.current?.getMap();
+        const path = routePath.current;
 
-    // Recorder Setup
-    const canvas = document.querySelector(".mapboxgl-canvas");
-    // Limit to 25FPS for low lag on mobile
-    const stream = canvas.captureStream(25); 
-    const rec = new MediaRecorder(stream, { mimeType: "video/webm;codecs=vp9" });
-    chunksRef.current = [];
-    rec.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data); };
-    rec.onstop = () => {
-       const blob = new Blob(chunksRef.current, { type: "video/webm" });
-       setVideoUrl(URL.createObjectURL(blob));
-    };
-    recorderRef.current = rec;
+        // Recorder Setup
+        const canvas = document.querySelector(".mapboxgl-canvas");
+        const stream = canvas.captureStream(25); 
+        const rec = new MediaRecorder(stream, { mimeType: "video/webm;codecs=vp9" });
+        chunksRef.current = [];
+        rec.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data); };
+        rec.onstop = () => {
+            const blob = new Blob(chunksRef.current, { type: "video/webm" });
+            setVideoUrl(URL.createObjectURL(blob));
+        };
+        recorderRef.current = rec;
 
-    // Jump to Start
-    const initialBearing = turf.bearing(turf.point(path[0]), turf.point(path[1]));
-    map.jumpTo({ center: path[0], zoom: 5, pitch: 60, bearing: initialBearing });
+        // Jump to Start
+        const initialBearing = turf.bearing(turf.point(path[0]), turf.point(path[1]));
+        map.jumpTo({ center: path[0], zoom: 5, pitch: 60, bearing: initialBearing });
 
-    // Minimal Buffer (600ms) - Just enough for tiles
-    await new Promise(r => setTimeout(r, 600)); 
+        // Tiny buffer for map tiles (necessary evil, but kept short)
+        await new Promise(r => setTimeout(r, 800)); 
 
-    setLoadingState(null);
-    setIsPlaying(true);
-    rec.start();
+        setLoadingState(null); // Hide Loader BEFORE starting flight
+        setIsPlaying(true);
+        rec.start();
 
-    // Animation
-    const obj = { index: 0 };
-    animTimeline.current = gsap.to(obj, {
-      index: path.length - 1,
-      duration: 12, // Slightly faster flight
-      ease: "none",
-      onUpdate: () => {
-        const i = Math.floor(obj.index);
-        const curr = path[i];
-        const next = path[i+1] || curr;
-        const bearing = turf.bearing(turf.point(curr), turf.point(next));
+        // Animation
+        const obj = { index: 0 };
+        animTimeline.current = gsap.to(obj, {
+            index: path.length - 1,
+            duration: 12,
+            ease: "none",
+            onUpdate: () => {
+                const i = Math.floor(obj.index);
+                const curr = path[i];
+                const next = path[i+1] || curr;
+                const bearing = turf.bearing(turf.point(curr), turf.point(next));
 
-        map.getSource("plane-point").setData({
-          type: "Feature",
-          geometry: { type: "Point", coordinates: curr },
-          properties: { rotate: bearing }
+                map.getSource("plane-point").setData({
+                    type: "Feature",
+                    geometry: { type: "Point", coordinates: curr },
+                    properties: { rotate: bearing }
+                });
+
+                const tail = path.slice(Math.max(0, i - 40), i + 1);
+                map.getSource("tail-line").setData({ type: "Feature", geometry: { type: "LineString", coordinates: tail } });
+
+                map.easeTo({
+                    center: curr, bearing, pitch: 60, zoom: 5.5, duration: 0
+                });
+            },
+            onComplete: () => {
+                stopFlight();
+            }
         });
-
-        // Tail length optimized
-        const tail = path.slice(Math.max(0, i - 40), i + 1);
-        map.getSource("tail-line").setData({ type: "Feature", geometry: { type: "LineString", coordinates: tail } });
-
-        map.easeTo({
-          center: curr,
-          bearing: bearing,
-          pitch: 60,
-          zoom: 5.5,
-          duration: 0
-        });
-      },
-      onComplete: () => {
-        if(recorderRef.current?.state === "recording") rec.stop();
-        setIsPlaying(false);
-        setIsDrawerOpen(true);
-        map.easeTo({ pitch: 0, zoom: 3, duration: 1500 });
-      }
-    });
+    } catch (err) {
+        console.error("Flight Error", err);
+        stopFlight(); // Ensure cleanup happens
+    }
   };
 
   const stopFlight = () => {
@@ -344,6 +326,9 @@ export default function App() {
     setIsPlaying(false);
     setIsDrawerOpen(true);
     setLoadingState(null);
+    
+    // Reset Camera
+    mapRef.current?.easeTo({ pitch: 0, zoom: 3, duration: 1500 });
   };
 
   const onMapLoad = (e) => {
@@ -452,7 +437,7 @@ export default function App() {
               </h2>
 
               <LocationInput 
-                zIndex={50} // Higher z-index for top input
+                zIndex={50}
                 placeholder="Where from?"
                 value={fromCity} setValue={setFromCity}
                 suggestions={fromSug} setSuggestions={setFromSug}
@@ -466,7 +451,7 @@ export default function App() {
               </div>
 
               <LocationInput 
-                zIndex={30} // Lower z-index for bottom input
+                zIndex={30}
                 placeholder="Where to?"
                 value={toCity} setValue={setToCity}
                 suggestions={toSug} setSuggestions={setToSug}
