@@ -29,7 +29,7 @@ import "mapbox-gl/dist/mapbox-gl.css";
 
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN;
 const PLANE_ICON_ID = "plane-icon";
-const PLANE_URL = "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c5/Airplane_silhouette.svg/2048px-Airplane_silhouette.svg.png"; 
+const PLANE_URL = "./aeroplane.svg"; 
 
 // ==========================================
 // 2. UI COMPONENTS
