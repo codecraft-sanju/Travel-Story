@@ -29,18 +29,9 @@ import "mapbox-gl/dist/mapbox-gl.css";
 // ==========================================
 
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN;
-
-// --- PLANE 1: WHITE ---
-const PLANE_WHITE_ID = "plane-white";
-const PLANE_WHITE_URL = "./plane.png"; 
-
-// --- PLANE 2: ORANGE (NEW) ---
-const PLANE_ORANGE_ID = "plane-orange";
-const PLANE_ORANGE_URL = "./plane2.png"; 
-
-// Yaha select karo konsa plane udana hai:
-// "plane-white" ya "plane-orange"
-const ACTIVE_PLANE_ID = PLANE_ORANGE_ID; 
+const PLANE_ICON_ID = "plane-icon";
+// Ensure this image points UP (North) by default
+const PLANE_URL = "./plane.png"; 
 
 // ==========================================
 // 2. UI COMPONENTS
@@ -259,7 +250,7 @@ export default function App() {
     }
   };
 
-  // Start Flight
+  // Start Flight (Fixed: Plane Rotates, Map Locked North)
   const startFlight = async () => {
     if (routePath.current.length === 0) return generateRoute();
 
@@ -356,19 +347,10 @@ export default function App() {
   const onMapLoad = (e) => {
     const map = e.target;
     
-    // --- LOAD WHITE PLANE ---
-    if(!map.hasImage(PLANE_WHITE_ID)) {
-      map.loadImage(PLANE_WHITE_URL, (err, img) => {
+    if(!map.hasImage(PLANE_ICON_ID)) {
+      map.loadImage(PLANE_URL, (err, img) => {
         if (err) return;
-        if (!map.hasImage(PLANE_WHITE_ID)) map.addImage(PLANE_WHITE_ID, img);
-      });
-    }
-
-    // --- LOAD ORANGE PLANE (NEW) ---
-    if(!map.hasImage(PLANE_ORANGE_ID)) {
-      map.loadImage(PLANE_ORANGE_URL, (err, img) => {
-        if (err) return;
-        if (!map.hasImage(PLANE_ORANGE_ID)) map.addImage(PLANE_ORANGE_ID, img);
+        if (!map.hasImage(PLANE_ICON_ID)) map.addImage(PLANE_ICON_ID, img);
       });
     }
 
@@ -380,47 +362,48 @@ export default function App() {
     map.addSource("plane-point", { type: "geojson", data: empty });
 
     // === BLUE DASHED ROUTE STYLE ===
+    
+    // 1. Background Blue Glow (Optional but looks good)
     map.addLayer({
       id: "route-glow", type: "line", source: "route-line",
-      paint: { "line-color": "#0ea5e9", "line-width": 8, "line-opacity": 0.2, "line-blur": 4 }
+      paint: { 
+        "line-color": "#0ea5e9", // Sky blue
+        "line-width": 8, 
+        "line-opacity": 0.2, 
+        "line-blur": 4 
+      }
     });
 
+    // 2. THE BLUE DASHED LINE (- - - - -)
     map.addLayer({
       id: "route-layer", type: "line", source: "route-line",
       paint: { 
-        "line-color": "#0ea5e9", 
+        "line-color": "#0ea5e9", // Bright Blue
         "line-width": 4, 
-        "line-dasharray": [2, 3],
+        "line-dasharray": [2, 3], // 2px line, 3px gap creates - - - effect
         "line-opacity": 1
       }
     });
 
+    // 3. Golden Tail (Behind the plane)
     map.addLayer({
       id: "tail-layer", type: "line", source: "tail-line",
       layout: { "line-cap": "round", "line-join": "round" },
-      paint: { "line-color": "#fbbf24", "line-width": 4, "line-blur": 2 }
+      paint: { 
+        "line-color": "#fbbf24", 
+        "line-width": 4, 
+        "line-blur": 2 
+      }
     });
 
     map.addLayer({ id: "from-l", type: "circle", source: "from-point", paint: { "circle-radius": 8, "circle-color": "#10b981", "circle-stroke-width": 2, "circle-stroke-color": "#fff" } });
     map.addLayer({ id: "to-l", type: "circle", source: "to-point", paint: { "circle-radius": 8, "circle-color": "#ef4444", "circle-stroke-width": 2, "circle-stroke-color": "#fff" } });
     
-    // === PLANE LAYER (WITH ROTATION FIX) ===
     map.addLayer({
-      id: "plane-layer", 
-      type: "symbol", 
-      source: "plane-point",
+      id: "plane-layer", type: "symbol", source: "plane-point",
       layout: {
-        "icon-image": ACTIVE_PLANE_ID, // Use Orange or White
-        
-        // --- ROTATION LOGIC (VERY IMPORTANT) ---
-        // Agar Orange plane hai (jo right side dekh raha hai), usko -90 rotate karo.
-        // Agar White plane hai (jo almost upar dekh raha hai), usko normally rotate karo.
-        "icon-rotate": [
-            "+", 
-            ["get", "rotate"], 
-            ACTIVE_PLANE_ID === PLANE_ORANGE_ID ? -90 : 0 
-        ],
-
+        "icon-image": PLANE_ICON_ID,
+        "icon-rotate": ["get", "rotate"],
         "icon-rotation-alignment": "map",
         "icon-pitch-alignment": "map",
         "icon-allow-overlap": true,
