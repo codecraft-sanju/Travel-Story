@@ -6,7 +6,7 @@ import React, {
   memo,
 } from "react";
 import Map, { Source, Layer } from "react-map-gl";
-import mapboxgl from "mapbox-gl"; 
+import mapboxgl from "mapbox-gl";
 import axios from "axios";
 import { gsap } from "gsap";
 import * as turf from "@turf/turf";
@@ -29,9 +29,18 @@ import "mapbox-gl/dist/mapbox-gl.css";
 // ==========================================
 
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN;
-const PLANE_ICON_ID = "plane-icon";
-// Ensure this image points UP (North) by default for best results
-const PLANE_URL = "./plane.png"; 
+
+// --- PLANE 1: WHITE ---
+const PLANE_WHITE_ID = "plane-white";
+const PLANE_WHITE_URL = "./plane.png"; 
+
+// --- PLANE 2: ORANGE (NEW) ---
+const PLANE_ORANGE_ID = "plane-orange";
+const PLANE_ORANGE_URL = "./plane2.png"; 
+
+// Yaha select karo konsa plane udana hai:
+// "plane-white" ya "plane-orange"
+const ACTIVE_PLANE_ID = PLANE_ORANGE_ID; 
 
 // ==========================================
 // 2. UI COMPONENTS
@@ -173,7 +182,6 @@ export default function App() {
   const animTimeline = useRef(null);
   const recorderRef = useRef(null);
   const chunksRef = useRef([]);
-  // To keep track of last valid bearing so plane doesn't snap to 0 at end
   const lastBearing = useRef(0);
 
   // Fetch Suggestions
@@ -218,7 +226,6 @@ export default function App() {
         const curved = turf.bezierSpline(greatCircle, { resolution: 10000, sharpness: 0.6 });
         const distance = turf.length(curved, { units: "kilometers" });
         
-        // Performance: Reduce points for smoother rendering on mobile
         const steps = Math.ceil(distance / 5); 
         const path = [];
         for(let i=0; i<=steps; i++) {
@@ -230,7 +237,6 @@ export default function App() {
         if(map) {
             map.getSource("route-line")?.setData({ type: "Feature", geometry: { type: "LineString", coordinates: path } });
             
-            // Calculate initial bearing correctly
             const initialBearing = turf.bearing(turf.point(path[0]), turf.point(path[1]));
             lastBearing.current = initialBearing;
 
@@ -253,7 +259,7 @@ export default function App() {
     }
   };
 
-  // Start Flight (FIXED ROTATION LOGIC)
+  // Start Flight
   const startFlight = async () => {
     if (routePath.current.length === 0) return generateRoute();
 
@@ -264,7 +270,7 @@ export default function App() {
         const map = mapRef.current?.getMap();
         const path = routePath.current;
 
-        // Recorder Setup 
+        // Recorder Setup
         const canvas = document.querySelector(".mapboxgl-canvas");
         if(canvas) {
             const stream = canvas.captureStream(30); 
@@ -280,9 +286,8 @@ export default function App() {
             rec.start();
         }
 
-        // Initial Setup
-        const initialBearing = turf.bearing(turf.point(path[0]), turf.point(path[1]));
-        map.jumpTo({ center: path[0], zoom: 5, pitch: 60, bearing: initialBearing });
+        // Initial Position - Map stays North Up
+        map.jumpTo({ center: path[0], zoom: 5, pitch: 50, bearing: 0 });
 
         await new Promise(r => setTimeout(r, 600)); 
 
@@ -291,7 +296,6 @@ export default function App() {
         
         const obj = { index: 0 };
         
-        // --- ANIMATION START ---
         animTimeline.current = gsap.to(obj, {
             index: path.length - 1,
             duration: 12,
@@ -299,34 +303,33 @@ export default function App() {
             onUpdate: () => {
                 const i = Math.floor(obj.index);
                 const curr = path[i];
-                
-                // --- FIX: Dynamic Bearing Logic ---
-                // We look ahead to calculate direction. If at the end, keep previous bearing.
                 const nextIndex = Math.min(i + 1, path.length - 1);
                 const next = path[nextIndex];
                 
                 let bearing = lastBearing.current;
 
-                // Only calculate if we have two distinct points
                 if (curr[0] !== next[0] || curr[1] !== next[1]) {
                      bearing = turf.bearing(turf.point(curr), turf.point(next));
-                     lastBearing.current = bearing; // Save for the very last frame
+                     lastBearing.current = bearing;
                 }
 
+                // 1. Rotate Plane
                 map.getSource("plane-point").setData({
                     type: "Feature",
                     geometry: { type: "Point", coordinates: curr },
                     properties: { rotate: bearing }
                 });
 
+                // 2. Update Tail
                 const tail = path.slice(Math.max(0, i - 40), i + 1);
                 map.getSource("tail-line").setData({ type: "Feature", geometry: { type: "LineString", coordinates: tail } });
 
+                // 3. Move Camera (Keep Bearing 0 = North Up)
                 map.easeTo({
                     center: curr, 
-                    bearing: bearing, // Camera follows plane direction
-                    pitch: 60, 
+                    pitch: 50, 
                     zoom: 5.5, 
+                    bearing: 0, 
                     duration: 0, 
                     easing: t => t
                 });
@@ -347,20 +350,25 @@ export default function App() {
     setIsPlaying(false);
     setIsDrawerOpen(true);
     setLoadingState(null);
-    mapRef.current?.easeTo({ pitch: 0, zoom: 3, duration: 1500 });
+    mapRef.current?.easeTo({ pitch: 0, zoom: 3, bearing: 0, duration: 1500 });
   };
 
   const onMapLoad = (e) => {
     const map = e.target;
     
-    // Robust Image Loading
-    if(!map.hasImage(PLANE_ICON_ID)) {
-      map.loadImage(PLANE_URL, (err, img) => {
-        if (err) {
-            console.error("Plane icon load failed", err);
-            return;
-        }
-        if (!map.hasImage(PLANE_ICON_ID)) map.addImage(PLANE_ICON_ID, img);
+    // --- LOAD WHITE PLANE ---
+    if(!map.hasImage(PLANE_WHITE_ID)) {
+      map.loadImage(PLANE_WHITE_URL, (err, img) => {
+        if (err) return;
+        if (!map.hasImage(PLANE_WHITE_ID)) map.addImage(PLANE_WHITE_ID, img);
+      });
+    }
+
+    // --- LOAD ORANGE PLANE (NEW) ---
+    if(!map.hasImage(PLANE_ORANGE_ID)) {
+      map.loadImage(PLANE_ORANGE_URL, (err, img) => {
+        if (err) return;
+        if (!map.hasImage(PLANE_ORANGE_ID)) map.addImage(PLANE_ORANGE_ID, img);
       });
     }
 
@@ -371,26 +379,50 @@ export default function App() {
     map.addSource("to-point", { type: "geojson", data: empty });
     map.addSource("plane-point", { type: "geojson", data: empty });
 
+    // === BLUE DASHED ROUTE STYLE ===
+    map.addLayer({
+      id: "route-glow", type: "line", source: "route-line",
+      paint: { "line-color": "#0ea5e9", "line-width": 8, "line-opacity": 0.2, "line-blur": 4 }
+    });
+
     map.addLayer({
       id: "route-layer", type: "line", source: "route-line",
-      paint: { "line-color": "#ffffff", "line-width": 2, "line-opacity": 0.5, "line-dasharray": [2, 4] }
+      paint: { 
+        "line-color": "#0ea5e9", 
+        "line-width": 4, 
+        "line-dasharray": [2, 3],
+        "line-opacity": 1
+      }
     });
+
     map.addLayer({
       id: "tail-layer", type: "line", source: "tail-line",
       layout: { "line-cap": "round", "line-join": "round" },
-      paint: { "line-color": "#fbbf24", "line-width": 4, "line-blur": 1 }
+      paint: { "line-color": "#fbbf24", "line-width": 4, "line-blur": 2 }
     });
+
     map.addLayer({ id: "from-l", type: "circle", source: "from-point", paint: { "circle-radius": 8, "circle-color": "#10b981", "circle-stroke-width": 2, "circle-stroke-color": "#fff" } });
     map.addLayer({ id: "to-l", type: "circle", source: "to-point", paint: { "circle-radius": 8, "circle-color": "#ef4444", "circle-stroke-width": 2, "circle-stroke-color": "#fff" } });
     
-    // Mobile Optimized Plane Size
+    // === PLANE LAYER (WITH ROTATION FIX) ===
     map.addLayer({
-      id: "plane-layer", type: "symbol", source: "plane-point",
+      id: "plane-layer", 
+      type: "symbol", 
+      source: "plane-point",
       layout: {
-        "icon-image": PLANE_ICON_ID,
-        "icon-rotate": ["get", "rotate"],
-        "icon-rotation-alignment": "map", // Syncs rotation with map compass
-        "icon-pitch-alignment": "map",    // Keeps plane flat on map when 3D pitched
+        "icon-image": ACTIVE_PLANE_ID, // Use Orange or White
+        
+        // --- ROTATION LOGIC (VERY IMPORTANT) ---
+        // Agar Orange plane hai (jo right side dekh raha hai), usko -90 rotate karo.
+        // Agar White plane hai (jo almost upar dekh raha hai), usko normally rotate karo.
+        "icon-rotate": [
+            "+", 
+            ["get", "rotate"], 
+            ACTIVE_PLANE_ID === PLANE_ORANGE_ID ? -90 : 0 
+        ],
+
+        "icon-rotation-alignment": "map",
+        "icon-pitch-alignment": "map",
         "icon-allow-overlap": true,
         "icon-ignore-placement": true,
         "icon-size": [
