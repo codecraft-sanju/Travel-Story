@@ -196,11 +196,9 @@ export default function App() {
     mapRef.current?.flyTo({ center: coords, zoom: 4, duration: 1000 });
   };
 
-  // --- SAFE GENERATE ROUTE ---
   const generateRoute = async () => {
     if (!fromCoord.current || !toCoord.current) return alert("Select Origin & Destination");
     
-    // 1. Show Loader
     setLoadingState("Processing...");
     setIsDrawerOpen(false);
 
@@ -208,24 +206,21 @@ export default function App() {
         const start = fromCoord.current;
         const end = toCoord.current;
 
-        // Check if Same Location
         if(start[0] === end[0] && start[1] === end[1]) {
             throw new Error("Start and End cannot be same");
         }
 
-        // 2. Math Calculations
         const greatCircle = turf.greatCircle(start, end, { npoints: 100 });
         const curved = turf.bezierSpline(greatCircle, { resolution: 10000, sharpness: 0.6 });
         const distance = turf.length(curved, { units: "kilometers" });
         
-        const steps = Math.ceil(distance / 5); // Optimization
+        const steps = Math.ceil(distance / 5); 
         const path = [];
         for(let i=0; i<=steps; i++) {
             path.push(turf.along(curved, (i * distance)/steps, { units: "kilometers" }).geometry.coordinates);
         }
         routePath.current = path;
 
-        // 3. Update Map
         const map = mapRef.current?.getMap();
         if(map) {
             map.getSource("route-line")?.setData({ type: "Feature", geometry: { type: "LineString", coordinates: path } });
@@ -245,13 +240,11 @@ export default function App() {
         console.error("Route Error", error);
         alert("Could not generate route. Please try slightly different locations.");
     } finally {
-        // 4. ALWAYS HIDE LOADER
         setLoadingState(null);
         setTimeout(() => setIsDrawerOpen(true), 300);
     }
   };
 
-  // --- SAFE START FLIGHT ---
   const startFlight = async () => {
     if (routePath.current.length === 0) return generateRoute();
 
@@ -262,7 +255,6 @@ export default function App() {
         const map = mapRef.current?.getMap();
         const path = routePath.current;
 
-        // Recorder Setup
         const canvas = document.querySelector(".mapboxgl-canvas");
         const stream = canvas.captureStream(25); 
         const rec = new MediaRecorder(stream, { mimeType: "video/webm;codecs=vp9" });
@@ -274,18 +266,15 @@ export default function App() {
         };
         recorderRef.current = rec;
 
-        // Jump to Start
         const initialBearing = turf.bearing(turf.point(path[0]), turf.point(path[1]));
         map.jumpTo({ center: path[0], zoom: 5, pitch: 60, bearing: initialBearing });
 
-        // Tiny buffer for map tiles (necessary evil, but kept short)
         await new Promise(r => setTimeout(r, 800)); 
 
-        setLoadingState(null); // Hide Loader BEFORE starting flight
+        setLoadingState(null);
         setIsPlaying(true);
         rec.start();
 
-        // Animation
         const obj = { index: 0 };
         animTimeline.current = gsap.to(obj, {
             index: path.length - 1,
@@ -316,7 +305,7 @@ export default function App() {
         });
     } catch (err) {
         console.error("Flight Error", err);
-        stopFlight(); // Ensure cleanup happens
+        stopFlight();
     }
   };
 
@@ -326,8 +315,6 @@ export default function App() {
     setIsPlaying(false);
     setIsDrawerOpen(true);
     setLoadingState(null);
-    
-    // Reset Camera
     mapRef.current?.easeTo({ pitch: 0, zoom: 3, duration: 1500 });
   };
 
@@ -357,6 +344,8 @@ export default function App() {
     });
     map.addLayer({ id: "from-l", type: "circle", source: "from-point", paint: { "circle-radius": 8, "circle-color": "#10b981", "circle-stroke-width": 2, "circle-stroke-color": "#fff" } });
     map.addLayer({ id: "to-l", type: "circle", source: "to-point", paint: { "circle-radius": 8, "circle-color": "#ef4444", "circle-stroke-width": 2, "circle-stroke-color": "#fff" } });
+    
+    // UPDATED PLANE SIZE LOGIC
     map.addLayer({
       id: "plane-layer", type: "symbol", source: "plane-point",
       layout: {
@@ -365,7 +354,13 @@ export default function App() {
         "icon-rotation-alignment": "map",
         "icon-allow-overlap": true,
         "icon-ignore-placement": true,
-        "icon-size": ["interpolate", ["linear"], ["zoom"], 0, 0.2, 5, 0.5, 10, 0.8]
+        // SMALLER SIZE FOR MOBILE
+        "icon-size": [
+            "interpolate", ["linear"], ["zoom"], 
+            0, 0.05,  // Zoom 0 (World): Tiny dot
+            5, 0.2,   // Zoom 5 (Country): Small icon
+            10, 0.4   // Zoom 10 (City): Visible but not huge
+        ]
       }
     });
   };
